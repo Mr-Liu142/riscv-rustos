@@ -7,6 +7,7 @@ use core::arch::asm;
 
 mod console;
 mod util;
+mod trap;
 
 // 启动栈大小
 const STACK_SIZE: usize = 4096 * 4;
@@ -70,6 +71,16 @@ fn _start() -> ! {
 #[no_mangle]
 fn rust_main() -> ! {
     println!("Hello, RISC-V RustOS!");
+
+
+    // 初始化中断系统
+    trap::init();
+    
+    // 运行中断系统测试
+    println!("Starting trap system tests...");
+    trap::infrastructure::test::run_all_tests();
+    println!("Trap system tests completed");
+    
     
     // 使用新封装的系统信息功能
     let sys_info = util::sbi::system::get_system_info();
