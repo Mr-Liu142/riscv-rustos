@@ -6,6 +6,7 @@ use core::panic::PanicInfo;
 use core::arch::asm;
 
 mod console;
+mod util;
 
 // 启动栈大小
 const STACK_SIZE: usize = 4096 * 4;
@@ -16,19 +17,21 @@ static mut STACK: [u8; STACK_SIZE] = [0; STACK_SIZE];
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    let mut msg = "Panicked: ";
     if let Some(location) = info.location() {
-        msg = "Panicked at";
-        console::print_str(msg);
+        console::print_str("Panicked at ");
         console::print_str(location.file());
         console::print_str(":");
         console::print_num(location.line() as usize);
         console::print_str(": ");
         if let Some(message) = info.message() {
-            console::print_str(format_args!("{}", message).as_str().unwrap_or("Unknown error"));
+            if let Some(args_str) = format_args!("{}", message).as_str() {
+                console::print_str(args_str);
+            } else {
+                console::print_str("Unknown error");
+            }
         }
     } else {
-        console::print_str(msg);
+        console::print_str("Panicked: Unknown location");
     }
     loop {}
 }
@@ -66,7 +69,17 @@ fn _start() -> ! {
 
 #[no_mangle]
 fn rust_main() -> ! {
-    // 使用直接的SBI调用确保输出可见
-    console::print_str("Hello, world!\n");
+    println!("Hello, RISC-V RustOS!");
+    
+    // 获取SBI版本信息
+    let (major, minor) = util::sbi::get_spec_version();
+    println!("SBI版本: {}.{}", major, minor);
+    
+    println!("SBI实现ID: {}", util::sbi::get_impl_id());
+    println!("SBI实现版本: {}", util::sbi::get_impl_version());
+    
     loop {}
 }
+
+// 只导出print函数，println!宏已经通过#[macro_export]导出到了crate根
+pub use console::print;
