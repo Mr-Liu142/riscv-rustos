@@ -71,14 +71,54 @@ fn _start() -> ! {
 fn rust_main() -> ! {
     println!("Hello, RISC-V RustOS!");
     
-    // 获取SBI版本信息
-    let (major, minor) = util::sbi::get_spec_version();
-    println!("SBI版本: {}.{}", major, minor);
+    // 使用新封装的系统信息功能
+    let sys_info = util::sbi::system::get_system_info();
+    sys_info.print();
     
-    println!("SBI实现ID: {}", util::sbi::get_impl_id());
-    println!("SBI实现版本: {}", util::sbi::get_impl_version());
+    // 测试控制台输入功能
+    println!("Please input some text (max 20 characters):");
+    let mut buffer = [0u8; 21];
+    let len = util::sbi::console::getline(&mut buffer, true);
+    println!("You entered {} characters: {}", len, core::str::from_utf8(&buffer[..len]).unwrap_or("Invalid UTF-8"));
     
-    loop {}
+    // 测试时钟功能
+    println!("Current time count: {}", util::sbi::timer::get_time());
+    println!("Waiting for a while...");
+    util::sbi::timer::sleep_cycles(10000000); // 等待一段时间
+    println!("Current time count: {}", util::sbi::timer::get_time());
+    
+    // 演示TLB刷新
+    println!("Flushing local TLB...");
+    util::sbi::tlb::flush_local();
+    
+    // 设置一个相对定时器
+    println!("Setting relative timer, interrupt will be triggered after 1 second...");
+    // 注意：实际使用需要设置中断处理程序
+    util::sbi::timer::set_timer_rel(10000000); // 假设10M周期约为1秒
+    
+    // 循环等待
+    println!("System startup completed, entering main loop");
+    loop {
+        // 尝试获取控制台输入
+        if let Some(c) = util::sbi::console::try_getchar() {
+            match c {
+                'q' => {
+                    println!("User requested shutdown");
+                    util::sbi::system::shutdown(util::sbi::system::ShutdownReason::UserRequest);
+                }
+                'r' => {
+                    println!("User requested reboot");
+                    util::sbi::system::reboot(util::sbi::system::RebootType::Cold);
+                }
+                _ => {
+                    println!("Key pressed: {}", c);
+                }
+            }
+        }
+        
+        // 使用自旋循环提示处理器可以省电
+        core::hint::spin_loop();
+    }
 }
 
 // 只导出print函数，println!宏已经通过#[macro_export]导出到了crate根
