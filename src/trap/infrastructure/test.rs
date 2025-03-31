@@ -149,6 +149,42 @@ pub fn test_handler_registry() {
     
     println!("Interrupt handler registry test completed");
 }
+
+pub fn test_context_manager() {
+    println!("Testing context manager...");
+    
+    // 获取全局上下文管理器
+    let manager = crate::trap::get_context_manager();
+    
+    // 测试上下文大小查询
+    let task_size = manager.get_context_size(crate::trap::ContextType::Task);
+    let trap_size = manager.get_context_size(crate::trap::ContextType::Trap);
+    
+    println!("Context sizes: task={} bytes, trap={} bytes", task_size, trap_size);
+    
+    // 测试中断栈使用情况
+    let (used, total) = manager.get_interrupt_stack_usage();
+    println!("Interrupt stack usage: {}/{} bytes", used, total);
+    
+    // 模拟中断嵌套
+    let nest_level = crate::trap::get_interrupt_nest_level();
+    println!("Current interrupt nest level: {}", nest_level);
+    
+    // 测试是否在中断上下文中
+    let in_interrupt = crate::trap::is_in_interrupt_context();
+    println!("In interrupt context: {}", in_interrupt);
+    
+    // 测试创建任务上下文
+    let task_entry = 0x80200000;
+    let user_stack = 0x81000000;
+    let kernel_stack = 0x82000000;
+    
+    let ctx = manager.create_task_context(task_entry, user_stack, kernel_stack, 0);
+    println!("Created task context: PC=0x{:x}, SP=0x{:x}", ctx.sepc, ctx.x[2]);
+    
+    println!("Context manager test completed");
+}
+
 /// 运行所有测试
 pub fn run_all_tests() {
     println!("=== Starting trap infrastructure tests ===");
@@ -157,9 +193,12 @@ pub fn run_all_tests() {
     test_context_management();
     test_trap_context();
     test_handler_registry();
-    
+
     // 运行上下文切换测试
     context::test_context_switch();
+
+     // 运行上下文管理器测试
+     test_context_manager();
     
     println!("=== All trap tests completed successfully ===");
 }

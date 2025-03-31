@@ -177,64 +177,68 @@ fn default_unknown_handler(ctx: &mut TrapContext) -> TrapHandlerResult {
 /// # Parameters
 /// 
 /// * `context` - Pointer to the trap context saved by the assembly entry point
+/// 中断处理函数
+/// 
+/// 参数为指向上下文结构的指针
 #[no_mangle]
 pub extern "C" fn handle_trap(context: *mut TrapContext) {
-    let ctx = unsafe { &mut *context };
+    // 通过上下文管理器创建中断守卫
+    let mut ctx = unsafe { &mut *context };
     let cause = ctx.get_cause();
     
-    // Convert interrupt/exception to TrapType for handler dispatch
+    // 记录当前嵌套层级
+    let nest_level = crate::trap::ds::get_interrupt_nest_level();
+    
+    // 转换中断/异常为TrapType
     let trap_type = cause.to_trap_type();
     
-    // Log the trap occurrence with detailed information
+    // 记录中断发生
     if cause.is_interrupt() {
-        println!("Interrupt occurred: {:?}, code: {}", trap_type, cause.code());
+        println!("Interrupt occurred: {:?}, code: {}, nest level: {}", 
+                 trap_type, cause.code(), nest_level);
     } else {
-        println!("Exception occurred: {:?}, code: {}, addr: {:#x}", 
-                 trap_type, cause.code(), ctx.stval);
+        println!("Exception occurred: {:?}, code: {}, addr: {:#x}, nest level: {}", 
+                 trap_type, cause.code(), ctx.stval, nest_level);
     }
     
-    // Dispatch to registered handlers with priority handling
+    // 分发给注册的处理器
     match registry::dispatch_trap(trap_type, ctx) {
         TrapHandlerResult::Handled => {
-            // Successfully handled, nothing more to do
+            // 处理成功，无需额外操作
             println!("Interrupt handled successfully by registered handler");
         },
         TrapHandlerResult::Pass => {
-            // All handlers passed this interrupt, apply fallback handling
+            // 所有处理器都传递了此中断，使用默认处理
             println!("All handlers passed the interrupt: {:?}", trap_type);
             
-            // Basic fallback logic for common interrupts
+            // 默认处理逻辑...
             if cause.is_interrupt() {
                 match trap_type {
                     TrapType::TimerInterrupt => {
                         println!("Fallback handling for timer interrupt");
-                        // Could reset timer or acknowledge interrupt here
                     },
                     TrapType::SoftwareInterrupt => {
-                        println!("Fallback handling for software interrupt");
                         vector::clear_soft_interrupt();
                     },
                     TrapType::ExternalInterrupt => {
                         println!("Fallback handling for external interrupt");
-                        // Could acknowledge external interrupt controller here
                     },
                     _ => {
                         println!("No fallback handler for interrupt type: {:?}", trap_type);
                     }
                 }
             } else {
-                // Exception handling
+                // 异常处理
                 match trap_type {
                     TrapType::SystemCall => {
                         println!("Fallback handling for system call");
-                        // Advance PC past the ecall instruction
+                        // 系统调用返回时，PC需要加4跳过ecall指令
                         ctx.set_return_addr(ctx.sepc + 4);
                     },
                     TrapType::InstructionPageFault | 
                     TrapType::LoadPageFault | 
                     TrapType::StorePageFault => {
                         println!("Unhandled page fault at address {:#x}", ctx.stval);
-                        // In a real system, this might try to load the page or terminate the process
                     },
                     _ => {
                         println!("Unhandled exception: {:?} at {:#x}", trap_type, ctx.sepc);
@@ -243,25 +247,10 @@ pub extern "C" fn handle_trap(context: *mut TrapContext) {
             }
         },
         TrapHandlerResult::Failed(err) => {
-            // Handler execution failed
+            // 处理失败
             println!("Failed to handle interrupt: {:?}, error: {:?}", trap_type, err);
-            
-            // For critical failures, we might want to take emergency action
-            match err {
-                TrapError::NoHandler => {
-                    println!("No handler registered for this trap type");
-                },
-                TrapError::HandlerFailed => {
-                    println!("Handler execution failed, possible system instability");
-                    // Could potentially trigger system reset in production
-                },
-                TrapError::Unknown => {
-                    println!("Unknown error during trap handling");
-                }
-            }
         }
     }
     
-    // Log trap exit
-    println!("Exiting trap handler for {:?}", trap_type);
+    println!("Exiting trap handler for {:?}, nest level: {}", trap_type, nest_level);
 }
