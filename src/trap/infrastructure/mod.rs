@@ -3,7 +3,7 @@
 //! 提供中断系统基础功能和API
 
 mod vector;
-//mod context; // 将在后续实现
+mod context; // 现在已实现上下文管理
 //mod handler; // 将在后续实现 
 //mod csr;     // 将在后续实现
 pub mod test; // 测试功能公开
@@ -28,6 +28,18 @@ pub use vector::{
     clear_soft_interrupt,
 };
 
+// 导出上下文管理API
+pub use context::{
+    TaskContext,
+    task_switch,
+    prepare_task_context,
+    trap_return,
+    save_full_context,
+    restore_full_context,
+    create_test_context,
+    test_context_switch,
+};
+
 /// 初始化中断系统
 ///
 /// 这个函数完成基础中断系统的初始化工作
@@ -35,7 +47,7 @@ pub fn init_trap_system() {
     // 初始化中断向量表，使用直接模式
     vector::init(TrapMode::Direct);
     
-    println!("Trap infrastructure initialized");
+    println!("陷阱基础设施已初始化");
 }
 
 /// 中断处理函数
@@ -50,28 +62,28 @@ pub extern "C" fn handle_trap(context: *mut TrapContext) {
     if cause.is_interrupt() {
         match cause.code() {
             5 => {
-                println!("Timer interrupt occurred");
+                println!("时钟中断发生");
                 // 处理时钟中断
                 // TODO: 具体的时钟中断处理逻辑
             },
             1 => {
-                println!("Software interrupt occurred");
+                println!("软件中断发生");
                 // 处理软件中断
                 clear_soft_interrupt();
             },
             9 => {
-                println!("External interrupt occurred");
+                println!("外部中断发生");
                 // 处理外部中断
                 // TODO: 处理外部中断，通常需要与PLIC交互
             },
             _ => {
-                println!("Unhandled interrupt: {}", cause.code());
+                println!("未处理的中断: {}", cause.code());
             }
         }
     } else {
         match cause.code() {
             8 => {
-                println!("System call occurred");
+                println!("系统调用发生");
                 // 处理系统调用
                 // TODO: 具体的系统调用处理逻辑
                 
@@ -79,7 +91,7 @@ pub extern "C" fn handle_trap(context: *mut TrapContext) {
                 ctx.set_return_addr(ctx.sepc + 4);
             },
             _ => {
-                println!("Unhandled exception: {}, addr: {:#x}", cause.code(), ctx.stval);
+                println!("未处理的异常: {}, 地址: {:#x}", cause.code(), ctx.stval);
                 // 对于未处理的异常，可能需要终止当前进程
                 // TODO: 进程终止或异常处理逻辑
             }

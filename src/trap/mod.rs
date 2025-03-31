@@ -13,6 +13,17 @@ pub use infrastructure::{
     restore_interrupts,
 };
 
+// 导出上下文管理API
+pub use infrastructure::{
+    TaskContext,
+    task_switch,
+    prepare_task_context,
+    trap_return,
+    save_full_context,
+    restore_full_context,
+    TrapContext,
+};
+
 // 中断类型枚举
 #[derive(Debug, Copy, Clone)]
 pub enum TrapType {
@@ -56,5 +67,40 @@ pub fn init() {
     // 初始化中断基础设施
     infrastructure::init_trap_system();
     
-    println!("Trap system fully initialized");
+    println!("陷阱系统完全初始化");
+}
+
+/// 上下文切换功能
+/// 
+/// 安全地封装底层的task_switch函数
+/// 
+/// # 参数
+/// 
+/// * `current` - 当前任务上下文指针
+/// * `next` - 下一个任务上下文指针
+pub fn switch_to_context(current: &mut TaskContext, next: &TaskContext) {
+    unsafe {
+        infrastructure::task_switch(current, next);
+    }
+}
+
+/// 创建任务上下文
+/// 
+/// 封装prepare_task_context函数，提供更简单的接口
+/// 
+/// # 参数
+/// 
+/// * `entry` - 任务入口点函数
+/// * `user_stack` - 用户栈顶
+/// * `kernel_stack` - 内核栈顶
+/// 
+/// # 返回值
+/// 
+/// 返回配置好的陷阱上下文
+pub fn create_task_context(
+    entry: usize,
+    user_stack: usize,
+    kernel_stack: usize
+) -> TrapContext {
+    infrastructure::prepare_task_context(entry, user_stack, kernel_stack, 0)
 }
