@@ -5,6 +5,7 @@
 use crate::println;
 use core::arch::global_asm;
 use riscv::register::{stvec, scause, sie, sip, sstatus};
+use crate::trap::ds::{TrapMode, Interrupt, TrapContext};
 
 // 导入汇编中断入口代码
 global_asm!(include_str!("trap_entry.asm"));
@@ -15,41 +16,6 @@ extern "C" {
     fn __trap_entry();
     /// 从中断返回函数
     fn __trap_return();
-}
-
-/// 中断模式枚举
-#[derive(Debug, Copy, Clone)]
-pub enum TrapMode {
-    /// 直接模式 - 所有中断使用同一个处理函数
-    Direct = 0,
-    /// 向量模式 - 不同中断类型使用不同处理函数
-    Vectored = 1,
-}
-
-/// 中断类型枚举 - 只包含S模式下可用的中断
-#[derive(Debug, Copy, Clone)]
-pub enum Interrupt {
-    SupervisorSoft = 1,
-    SupervisorTimer = 5,
-    SupervisorExternal = 9,
-}
-
-/// 异常类型枚举
-#[derive(Debug, Copy, Clone)]
-pub enum Exception {
-    InstructionMisaligned = 0,
-    InstructionFault = 1,
-    IllegalInstruction = 2,
-    Breakpoint = 3,
-    LoadMisaligned = 4,
-    LoadFault = 5,
-    StoreMisaligned = 6,
-    StoreFault = 7,
-    UserEnvCall = 8,
-    SupervisorEnvCall = 9,
-    InstructionPageFault = 12,
-    LoadPageFault = 13,
-    StorePageFault = 15,
 }
 
 /// 初始化中断向量表
@@ -157,41 +123,5 @@ pub fn set_soft_interrupt() {
 pub fn clear_soft_interrupt() {
     unsafe {
         sip::clear_ssoft();
-    }
-}
-
-/// 中断上下文结构体，与汇编代码中的布局对应
-#[repr(C)]
-pub struct TrapContext {
-    // 通用寄存器
-    pub x: [usize; 32],
-    // 特权寄存器
-    pub sstatus: usize,
-    pub sepc: usize,
-    pub scause: usize,
-    pub stval: usize,
-}
-
-impl TrapContext {
-    /// 创建一个新的中断上下文
-    pub fn new() -> Self {
-        Self {
-            x: [0; 32],
-            sstatus: 0,
-            sepc: 0,
-            scause: 0,
-            stval: 0,
-        }
-    }
-    
-    /// 从上下文中获取异常原因
-    pub fn get_cause(&self) -> scause::Scause {
-        // 从保存的scause值创建Scause
-        unsafe { core::mem::transmute(self.scause) }
-    }
-    
-    /// 设置返回地址
-    pub fn set_return_addr(&mut self, addr: usize) {
-        self.sepc = addr;
     }
 }

@@ -9,14 +9,11 @@ mod context; // 现在已实现上下文管理
 pub mod test; // 测试功能公开
 
 use crate::println;
+use crate::trap::ds::{TrapContext, TaskContext, TrapMode, Interrupt, Exception};
 
 // 对外导出API
 pub use vector::{
     init, 
-    TrapMode, 
-    Interrupt, 
-    Exception,
-    TrapContext,
     enable_interrupts, 
     disable_interrupts, 
     restore_interrupts,
@@ -30,7 +27,6 @@ pub use vector::{
 
 // 导出上下文管理API
 pub use context::{
-    TaskContext,
     task_switch,
     prepare_task_context,
     trap_return,

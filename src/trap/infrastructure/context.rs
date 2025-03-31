@@ -6,78 +6,8 @@
 use core::fmt;
 use core::arch::asm;
 use crate::println;
-use super::vector::TrapContext;
+use crate::trap::ds::{TaskContext, TrapContext};
 use riscv::register::{sstatus, scause, stval, sepc};
-
-/// 任务上下文结构体
-/// 
-/// 不同于中断上下文，任务上下文只保存callee-saved寄存器，
-/// 用于任务切换(如线程或进程切换)
-#[repr(C)]
-#[derive(Clone)]
-pub struct TaskContext {
-    /// 返回地址，task_switch返回时会跳转到该地址
-    ra: usize,
-    /// 栈指针
-    sp: usize,
-    /// callee-saved寄存器
-    s: [usize; 12], // s0-s11
-}
-
-impl TaskContext {
-    /// 创建一个新的空任务上下文
-    pub fn new() -> Self {
-        Self {
-            ra: 0,
-            sp: 0,
-            s: [0; 12],
-        }
-    }
-    
-    /// 创建一个用于启动任务的上下文
-    /// 
-    /// # 参数
-    /// 
-    /// * `entry_point` - 任务入口点函数
-    /// * `stack_top` - 任务栈顶地址
-    pub fn new_for_task(entry_point: usize, stack_top: usize) -> Self {
-        let mut ctx = Self::new();
-        ctx.ra = entry_point;
-        ctx.sp = stack_top;
-        ctx
-    }
-    
-    /// 获取栈指针
-    pub fn get_sp(&self) -> usize {
-        self.sp
-    }
-    
-    /// 设置栈指针
-    pub fn set_sp(&mut self, sp: usize) {
-        self.sp = sp;
-    }
-    
-    /// 获取返回地址
-    pub fn get_ra(&self) -> usize {
-        self.ra
-    }
-    
-    /// 设置返回地址
-    pub fn set_ra(&mut self, ra: usize) {
-        self.ra = ra;
-    }
-}
-
-impl fmt::Debug for TaskContext {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TaskContext")
-            .field("ra", &format_args!("0x{:x}", self.ra))
-            .field("sp", &format_args!("0x{:x}", self.sp))
-            .field("s0", &format_args!("0x{:x}", self.s[0]))
-            .field("s1", &format_args!("0x{:x}", self.s[1]))
-            .finish()
-    }
-}
 
 /// 保存当前上下文到目标位置并切换到新上下文
 /// 

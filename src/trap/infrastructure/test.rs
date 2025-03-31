@@ -3,8 +3,7 @@
 use crate::println;
 use super::vector;
 use super::context;
-use super::TrapMode;
-use super::TaskContext;
+use crate::trap::ds::{TrapMode, TaskContext};
 
 /// 测试中断向量初始化
 pub fn test_vector_init() {
