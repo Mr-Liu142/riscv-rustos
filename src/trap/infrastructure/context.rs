@@ -381,7 +381,7 @@ pub fn create_test_context(pc: usize, sp: usize) -> TrapContext {
 
 /// 上下文测试函数
 pub fn test_context_switch() {
-    println!("测试上下文切换功能...");
+    println!("Testing context switching...");
     
     // 创建两个任务上下文
     let mut ctx1 = TaskContext::new();
@@ -400,18 +400,18 @@ pub fn test_context_switch() {
         ctx2.set_sp(STACK2.as_ptr().add(4096) as usize);
     }
     
-    println!("上下文1: {:?}", ctx1);
-    println!("上下文2: {:?}", ctx2);
+    println!("Context 1: {:?}", ctx1);
+    println!("Context 2: {:?}", ctx2);
     
-    println!("上下文切换测试完成");
+    println!("Context switching test completed");
 }
 
 /// 测试函数1
 fn test_context_func1() {
-    println!("这是测试函数1");
+    println!("This is test function 1");
 }
 
 /// 测试函数2
 fn test_context_func2() {
-    println!("这是测试函数2");
+    println!("This is test function 2");
 }

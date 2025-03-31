@@ -67,7 +67,7 @@ pub fn init() {
     // 初始化中断基础设施
     infrastructure::init_trap_system();
     
-    println!("陷阱系统完全初始化");
+    println!("Trap system fully initialized");
 }
 
 /// 上下文切换功能
