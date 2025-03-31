@@ -110,3 +110,24 @@ impl fmt::Debug for TrapCause {
                self.is_interrupt(), self.code())
     }
 }
+
+impl TrapType {
+    /// 中断类型的数量
+    pub const COUNT: usize = 10; // 包括所有已定义的类型
+    
+    /// 从索引转换为中断类型
+    pub fn from_index(index: usize) -> Self {
+        match index {
+            0 => TrapType::TimerInterrupt,
+            1 => TrapType::ExternalInterrupt,
+            2 => TrapType::SoftwareInterrupt,
+            3 => TrapType::SystemCall,
+            4 => TrapType::InstructionPageFault,
+            5 => TrapType::LoadPageFault,
+            6 => TrapType::StorePageFault,
+            7 => TrapType::InstructionAccessFault,
+            8 => TrapType::IllegalInstruction,
+            _ => TrapType::Unknown,
+        }
+    }
+}

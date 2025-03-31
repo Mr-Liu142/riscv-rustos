@@ -3,7 +3,9 @@
 use crate::println;
 use super::vector;
 use super::context;
+use super::registry; // 添加对registry模块的引用
 use crate::trap::ds::{TrapMode, TaskContext};
+use crate::trap::{TrapContext, TrapHandlerResult, TrapType}; // 添加对所需类型的引用
 
 /// 测试中断向量初始化
 pub fn test_vector_init() {
@@ -92,6 +94,61 @@ pub fn test_trap_context() {
     println!("Trap context test completed");
 }
 
+
+/// Test the interrupt handler registry functionality
+pub fn test_handler_registry() {
+    println!("Testing interrupt handler registry...");
+    
+    // Define test handlers
+    fn test_timer_handler(ctx: &mut TrapContext) -> TrapHandlerResult {
+        println!("Test timer handler called");
+        TrapHandlerResult::Handled
+    }
+    
+    fn test_software_handler(ctx: &mut TrapContext) -> TrapHandlerResult {
+        println!("Test software interrupt handler called");
+        TrapHandlerResult::Handled
+    }
+    
+    // Register test handlers
+    let result1 = registry::register_handler(
+        TrapType::TimerInterrupt,
+        test_timer_handler,
+        50, // Higher priority
+        "Test Timer Handler"
+    );
+    
+    let result2 = registry::register_handler(
+        TrapType::SoftwareInterrupt,
+        test_software_handler,
+        60,
+        "Test Software Interrupt Handler"
+    );
+    
+    println!("Registration results: {}, {}", result1, result2);
+    
+    // Print registered handlers
+    registry::print_handlers();
+    
+    // Get handler counts
+    let timer_count = registry::handler_count(TrapType::TimerInterrupt);
+    let software_count = registry::handler_count(TrapType::SoftwareInterrupt);
+    
+    println!("Handler counts: timer={}, software={}", timer_count, software_count);
+    
+    // Test unregistration
+    let unregister_result = registry::unregister_handler(
+        TrapType::TimerInterrupt,
+        "Test Timer Handler"
+    );
+    
+    println!("Unregistration result: {}", unregister_result);
+    
+    // Print handlers again
+    registry::print_handlers();
+    
+    println!("Interrupt handler registry test completed");
+}
 /// 运行所有测试
 pub fn run_all_tests() {
     println!("=== Starting trap infrastructure tests ===");
@@ -99,6 +156,7 @@ pub fn run_all_tests() {
     test_interrupt_control();
     test_context_management();
     test_trap_context();
+    test_handler_registry();
     
     // 运行上下文切换测试
     context::test_context_switch();

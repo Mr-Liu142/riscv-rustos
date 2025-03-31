@@ -4,7 +4,7 @@ use crate::println;
 
 // 导入子模块
 pub mod infrastructure;
-pub mod ds;  // 新增的数据结构模块
+pub mod ds;  // 数据结构模块
 
 // 从基础设施导出主要API
 pub use infrastructure::{
@@ -15,7 +15,7 @@ pub use infrastructure::{
 };
 
 // 从数据结构模块导出类型
-pub use ds::{TrapContext, TaskContext, TrapType, TrapCause};
+pub use ds::{TrapContext, TaskContext, TrapType, TrapCause, TrapHandler, TrapHandlerResult, TrapError};
 
 // 从基础设施导出任务切换函数
 pub use infrastructure::{
@@ -24,6 +24,14 @@ pub use infrastructure::{
     trap_return,
     save_full_context,
     restore_full_context,
+};
+
+// 导出处理器注册API
+pub use infrastructure::{
+    register_handler,
+    unregister_handler,
+    handler_count,
+    print_handlers,
 };
 
 /// 转换RISC-V中断原因为TrapType
@@ -38,7 +46,7 @@ pub fn init() {
     // 初始化中断基础设施
     infrastructure::init_trap_system();
     
-    println!("Trap system fully initialized");
+    println!("中断系统完全初始化");
 }
 
 /// 上下文切换功能

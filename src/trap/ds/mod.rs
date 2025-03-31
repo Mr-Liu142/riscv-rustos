@@ -5,7 +5,9 @@
 
 pub mod context;
 pub mod types;
+pub mod handler;
 
 // 从子模块重新导出所有公共类型，方便使用
 pub use context::{TrapContext, TaskContext};
 pub use types::{TrapMode, Interrupt, Exception, TrapType, TrapCause};
+pub use handler::{TrapHandler, TrapHandlerResult, TrapError, HandlerEntry};
