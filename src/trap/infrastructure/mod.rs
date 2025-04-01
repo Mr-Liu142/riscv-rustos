@@ -7,6 +7,8 @@ mod context;
 mod registry;
 pub mod test;
 pub mod di;  // New dependency injection module
+pub mod error_handler;  // Error handling module
+pub mod error_test;  // Error handling tests
 
 use crate::println;
 use crate::trap::ds::{TrapContext, TaskContext, TrapMode, Interrupt, Exception, TrapType, TrapHandlerResult, TrapError};
@@ -43,6 +45,20 @@ pub use registry::{
     dispatch_trap,
     handler_count,
     print_handlers,
+};
+
+// Export error handling API with renamed functions
+pub use error_handler::{
+    init as init_error_system,
+    register_handler as register_error_handler,
+    unregister_handler as unregister_error_handler,
+    handle_error as handle_system_error,
+    create_error as create_system_error,
+    print_handlers as print_error_handlers,
+    print_error_log,
+    clear_error_log,
+    is_panic_mode as is_in_panic_mode,
+    reset_panic_mode,
 };
 
 /// Initialize the trap system

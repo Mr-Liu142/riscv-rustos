@@ -39,6 +39,21 @@ pub use ds::{
     InterruptContextGuard, TrapMode, Interrupt, Exception,
 };
 
+// Export error handling system
+pub use infrastructure::{
+    init_error_system,
+    register_error_handler,
+    unregister_error_handler,
+    handle_system_error,
+    create_system_error,
+    print_error_handlers,
+    print_error_log,
+    clear_error_log,
+    is_in_panic_mode,
+    reset_panic_mode,
+};
+
+
 /// Initialize the trap system
 pub fn init() {
     // Initialize the trap system using the DI system
@@ -46,6 +61,9 @@ pub fn init() {
     
     // Initialize global context manager (for backward compatibility)
     ds::init_global_context_manager();
+
+    // Initialize error handling system
+    infrastructure::error_handler::init();
     
     println!("Trap system fully initialized");
 }

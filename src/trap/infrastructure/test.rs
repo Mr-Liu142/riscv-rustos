@@ -5,6 +5,7 @@ use super::vector;
 use super::context;
 use super::registry;
 use super::di;
+use super::error_test; // 添加这行导入
 use crate::trap::ds::{TrapMode, TaskContext, get_context_manager, get_interrupt_nest_level, is_in_interrupt_context};
 use crate::trap::{TrapContext, TrapHandlerResult, TrapType};
 
@@ -206,6 +207,10 @@ pub fn run_all_tests() {
         println!("\n=== Starting dependency injection tests ===");
         di::test::run_all_tests();
     }
+
+    // 添加错误处理测试
+    println!("\n=== Starting error handling tests ===");
+    error_test::run_all_tests();
     
     println!("=== All trap tests completed successfully ===");
 }
