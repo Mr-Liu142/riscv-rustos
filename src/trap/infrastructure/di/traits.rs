@@ -5,6 +5,7 @@
 
 use crate::trap::ds::{
     TrapContext, TaskContext, TrapType, TrapHandlerResult, 
+    SystemError, ErrorResult, ErrorHandler, ErrorSource, ErrorLevel,
     ContextError, ContextType, ContextState
 };
 
@@ -116,4 +117,48 @@ impl TrapSystemConfig for DefaultTrapSystemConfig {
     fn interrupt_stack_size(&self) -> usize {
         16 * 1024 // 16KB, same as the original implementation
     }
+}
+
+/// 错误处理器接口
+pub trait ErrorManagerInterface: Send + Sync {
+    /// 注册错误处理器
+    fn register_handler(
+        &mut self,
+        handler: ErrorHandler,
+        priority: u8,
+        description: &'static str,
+        source: Option<ErrorSource>,
+        level: Option<ErrorLevel>
+    ) -> bool;
+    
+    /// 注销错误处理器
+    fn unregister_handler(&mut self, description: &str) -> bool;
+    
+    /// 处理系统错误
+    fn handle_error(&mut self, error: SystemError) -> ErrorResult;
+    
+    /// 打印错误日志
+    fn print_error_log(&self, count: usize);
+    
+    /// 清空错误日志
+    fn clear_error_log(&mut self);
+    
+    /// 打印所有注册的处理器
+    fn print_handlers(&self);
+    
+    /// 检查是否处于恐慌模式
+    fn is_panic_mode(&self) -> bool;
+    
+    /// 重置恐慌模式
+    fn reset_panic_mode(&self);
+    
+    /// 创建新的系统错误
+    fn create_error(
+        &self,
+        source: ErrorSource,
+        level: ErrorLevel,
+        code: u16,
+        address: Option<usize>,
+        ip: usize
+    ) -> SystemError;
 }

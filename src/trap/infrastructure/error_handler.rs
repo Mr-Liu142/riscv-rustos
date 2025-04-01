@@ -6,26 +6,20 @@
 use crate::println;
 use crate::trap::ds::{
     SystemError, ErrorResult, ErrorHandler, ErrorHandlerEntry,
-    ErrorLog, ErrorSource, ErrorLevel, ErrorCode,
-    ErrorManager
+    ErrorLog, ErrorSource, ErrorLevel, ErrorCode
 };
-use crate::util::sbi::timer;
+use crate::trap::infrastructure::di;
 
-// 全局错误管理器
-static mut ERROR_MANAGER: Option<ErrorManager> = None;
-
-// 已初始化标志
+/// 初始化标志
 static mut INITIALIZED: bool = false;
 
 /// 初始化错误处理系统
 pub fn init() {
     unsafe {
         if INITIALIZED {
+            println!("Error handling system already initialized");
             return;
         }
-        
-        // 创建错误管理器
-        ERROR_MANAGER = Some(ErrorManager::new());
         
         // 注册默认处理器
         register_default_handlers();
@@ -84,6 +78,7 @@ fn register_default_handlers() {
     );
 }
 
+
 /// 注册自定义错误处理器
 pub fn register_handler(
     handler: ErrorHandler,
@@ -92,37 +87,17 @@ pub fn register_handler(
     source: Option<ErrorSource>,
     level: Option<ErrorLevel>
 ) -> bool {
-    let entry = ErrorHandlerEntry::new(handler, priority, description, source, level);
-    
-    unsafe {
-        // 使用模式匹配而不是as_mut()
-        match &mut ERROR_MANAGER {
-            Some(manager) => manager.register_handler(entry),
-            None => false
-        }
-    }
+    di::register_error_handler(handler, priority, description, source, level)
 }
 
 /// 注销错误处理器
 pub fn unregister_handler(description: &str) -> bool {
-    unsafe {
-        // 使用模式匹配而不是as_mut()
-        match &mut ERROR_MANAGER {
-            Some(manager) => manager.unregister_handler(description),
-            None => false
-        }
-    }
+    di::unregister_error_handler(description)
 }
 
 /// 处理系统错误
 pub fn handle_error(error: SystemError) -> ErrorResult {
-    unsafe {
-        // 使用模式匹配而不是as_mut()
-        match &mut ERROR_MANAGER {
-            Some(manager) => manager.handle_error(error),
-            None => emergency_error_handler(&error)
-        }
-    }
+    di::handle_system_error(error)
 }
 
 /// 创建新的系统错误
@@ -133,80 +108,34 @@ pub fn create_error(
     address: Option<usize>,
     ip: usize
 ) -> SystemError {
-    let error_code = ErrorCode::new(source, level, code);
-    SystemError::new(error_code, address, ip, timer::get_time())
-}
-
-/// 紧急错误处理 - 在错误管理器未初始化时使用
-fn emergency_error_handler(error: &SystemError) -> ErrorResult {
-    println!("EMERGENCY ERROR HANDLER: {}", error);
-    
-    if error.code().is_fatal() {
-        println!("FATAL ERROR in emergency mode, halting system");
-        // 无限循环
-        loop {
-            core::hint::spin_loop();
-        }
-    }
-    
-    ErrorResult::Partial
+    di::create_system_error(source, level, code, address, ip)
 }
 
 /// 打印错误日志
 pub fn print_error_log(count: usize) {
-    unsafe {
-        match &ERROR_MANAGER {
-            Some(manager) => manager.get_log().print_recent(count),
-            None => println!("Error manager not initialized")
-        }
-    }
+    di::print_error_log(count)
 }
 
 /// 清空错误日志
 pub fn clear_error_log() {
-    unsafe {
-        match &mut ERROR_MANAGER {
-            Some(manager) => {
-                manager.get_log_mut().clear();
-                println!("Error log cleared");
-            },
-            None => {}
-        }
-    }
+    di::clear_error_log()
 }
 
 /// 打印所有注册的错误处理器
 pub fn print_handlers() {
-    unsafe {
-        match &ERROR_MANAGER {
-            Some(manager) => manager.print_handlers(),
-            None => println!("Error manager not initialized")
-        }
-    }
+    di::print_error_handlers()
 }
 
 /// 检查是否处于恐慌模式
 pub fn is_panic_mode() -> bool {
-    unsafe {
-        match &ERROR_MANAGER {
-            Some(manager) => manager.is_panic_mode(),
-            None => false
-        }
-    }
+    di::is_in_panic_mode()
 }
 
 /// 重置恐慌模式
 pub fn reset_panic_mode() {
-    unsafe {
-        match &ERROR_MANAGER {
-            Some(manager) => {
-                manager.reset_panic_mode();
-                println!("Panic mode reset");
-            },
-            None => {}
-        }
-    }
+    di::reset_panic_mode()
 }
+
 
 // 默认错误处理器实现
 

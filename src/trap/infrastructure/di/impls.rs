@@ -10,7 +10,7 @@ use crate::trap::ds::{
 };
 use super::traits::{
     TrapHandlerInterface, ContextManagerInterface, 
-    HardwareControlInterface, TrapSystemConfig
+    HardwareControlInterface, TrapSystemConfig, ErrorManagerInterface
 };
 
 /// Standard Trap Handler Implementation
@@ -309,5 +309,96 @@ impl ContextManagerInterface for StandardContextManager {
     
     fn set_max_nest_level(&mut self, level: usize) {
         self.max_nest_level = level;
+    }
+}
+
+use crate::trap::ds::{
+    SystemError, ErrorResult, ErrorHandler, ErrorHandlerEntry,
+    ErrorSource, ErrorLevel, ErrorCode, ErrorManager
+};
+use crate::util::sbi::timer;
+
+/// 标准错误管理器实现
+pub struct StandardErrorManager {
+    /// 内部错误管理器
+    manager: ErrorManager,
+}
+
+impl StandardErrorManager {
+    /// 创建新的标准错误管理器
+    pub const fn new() -> Self {
+        Self {
+            manager: ErrorManager::new(),
+        }
+    }
+    
+    /// 紧急错误处理 - 在错误管理器未完全初始化时使用
+    fn emergency_error_handler(&self, error: &SystemError) -> ErrorResult {
+        println!("EMERGENCY ERROR HANDLER: {}", error);
+        
+        if error.code().is_fatal() {
+            println!("FATAL ERROR in emergency mode, halting system");
+            // 无限循环
+            loop {
+                core::hint::spin_loop();
+            }
+        }
+        
+        ErrorResult::Partial
+    }
+}
+
+impl ErrorManagerInterface for StandardErrorManager {
+    fn register_handler(
+        &mut self,
+        handler: ErrorHandler,
+        priority: u8,
+        description: &'static str,
+        source: Option<ErrorSource>,
+        level: Option<ErrorLevel>
+    ) -> bool {
+        let entry = ErrorHandlerEntry::new(handler, priority, description, source, level);
+        self.manager.register_handler(entry)
+    }
+    
+    fn unregister_handler(&mut self, description: &str) -> bool {
+        self.manager.unregister_handler(description)
+    }
+    
+    fn handle_error(&mut self, error: SystemError) -> ErrorResult {
+        self.manager.handle_error(error)
+    }
+    
+    fn print_error_log(&self, count: usize) {
+        self.manager.get_log().print_recent(count)
+    }
+    
+    fn clear_error_log(&mut self) {
+        self.manager.get_log_mut().clear();
+        println!("Error log cleared");
+    }
+    
+    fn print_handlers(&self) {
+        self.manager.print_handlers()
+    }
+    
+    fn is_panic_mode(&self) -> bool {
+        self.manager.is_panic_mode()
+    }
+    
+    fn reset_panic_mode(&self) {
+        self.manager.reset_panic_mode()
+    }
+    
+    fn create_error(
+        &self,
+        source: ErrorSource,
+        level: ErrorLevel,
+        code: u16,
+        address: Option<usize>,
+        ip: usize
+    ) -> SystemError {
+        let error_code = ErrorCode::new(source, level, code);
+        SystemError::new(error_code, address, ip, timer::get_time())
     }
 }

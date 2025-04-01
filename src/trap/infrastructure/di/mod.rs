@@ -10,11 +10,14 @@ pub mod test;  // Export test module
 
 use core::sync::atomic::{AtomicBool, Ordering};
 use crate::println;
+use self::impls::StandardErrorManager;
 use crate::trap::ds::{
     TrapContext, TaskContext, TrapType, TrapHandlerResult, TrapError,
+    SystemError, ErrorResult, ErrorHandler, ErrorSource, ErrorLevel,
     TrapMode, Interrupt, ContextError
 };
 use self::impls::{StandardContextManager, RiscvHardwareControl, StandardTrapHandler};
+use self::traits::DefaultTrapSystemConfig;
 
 /// Global trap system instance flag
 static TRAP_SYSTEM_INITIALIZED: AtomicBool = AtomicBool::new(false);
@@ -29,7 +32,10 @@ static mut HARDWARE_CONTROL: RiscvHardwareControl = RiscvHardwareControl::new();
 static TRAP_SYSTEM_CONFIG: DefaultTrapSystemConfig = DefaultTrapSystemConfig {};
 
 /// Static storage for trap system
-static mut TRAP_SYSTEM: Option<TrapSystem<StandardContextManager, RiscvHardwareControl>> = None;
+static mut TRAP_SYSTEM: Option<TrapSystem<StandardContextManager, RiscvHardwareControl, StandardErrorManager>> = None;
+
+/// Static storage for error manager
+static mut ERROR_MANAGER: StandardErrorManager = StandardErrorManager::new();
 
 /// Default handler implementations
 
@@ -156,11 +162,15 @@ pub fn initialize_trap_system(mode: TrapMode) {
     let hardware_control = unsafe { 
         StaticRef::from_static(&mut HARDWARE_CONTROL as *mut RiscvHardwareControl) 
     };
+    let error_manager = unsafe {
+        StaticRef::from_static(&mut ERROR_MANAGER as *mut StandardErrorManager)
+    };
     
     // Create trap system
     let mut trap_system = TrapSystem::new(
         context_manager,
         hardware_control,
+        error_manager,
         &TRAP_SYSTEM_CONFIG,
     );
     
@@ -199,7 +209,7 @@ pub fn get_trap_system_initialized() -> bool {
 /// # Panics
 ///
 /// Panics if the trap system is not initialized
-pub fn get_trap_system() -> &'static TrapSystem<StandardContextManager, RiscvHardwareControl> {
+pub fn get_trap_system() -> &'static TrapSystem<StandardContextManager, RiscvHardwareControl, StandardErrorManager> {
     if !TRAP_SYSTEM_INITIALIZED.load(Ordering::SeqCst) {
         panic!("Trap system not initialized");
     }
@@ -366,5 +376,66 @@ pub fn internal_handle_trap(context: *mut TrapContext) {
 pub use self::container::{TrapSystem, StaticRef};
 pub use self::traits::{
     TrapHandlerInterface, ContextManagerInterface, 
-    HardwareControlInterface, TrapSystemConfig, DefaultTrapSystemConfig
+    HardwareControlInterface, TrapSystemConfig, ErrorManagerInterface
 };
+
+/// Register an error handler
+pub fn register_error_handler(
+    handler: ErrorHandler,
+    priority: u8,
+    description: &'static str,
+    source: Option<ErrorSource>,
+    level: Option<ErrorLevel>
+) -> bool {
+    get_trap_system().get_error_manager_mut().register_handler(
+        handler, priority, description, source, level
+    )
+}
+
+/// Unregister an error handler
+pub fn unregister_error_handler(description: &str) -> bool {
+    get_trap_system().get_error_manager_mut().unregister_handler(description)
+}
+
+/// Handle a system error
+pub fn handle_system_error(error: SystemError) -> ErrorResult {
+    get_trap_system().get_error_manager_mut().handle_error(error)
+}
+
+/// Create a new system error
+pub fn create_system_error(
+    source: ErrorSource,
+    level: ErrorLevel,
+    code: u16,
+    address: Option<usize>,
+    ip: usize
+) -> SystemError {
+    get_trap_system().get_error_manager().create_error(
+        source, level, code, address, ip
+    )
+}
+
+/// Print error log
+pub fn print_error_log(count: usize) {
+    get_trap_system().get_error_manager().print_error_log(count)
+}
+
+/// Clear error log
+pub fn clear_error_log() {
+    get_trap_system().get_error_manager_mut().clear_error_log()
+}
+
+/// Print registered error handlers
+pub fn print_error_handlers() {
+    get_trap_system().get_error_manager().print_handlers()
+}
+
+/// Check if in panic mode
+pub fn is_in_panic_mode() -> bool {
+    get_trap_system().get_error_manager().is_panic_mode()
+}
+
+/// Reset panic mode
+pub fn reset_panic_mode() {
+    get_trap_system().get_error_manager().reset_panic_mode()
+}

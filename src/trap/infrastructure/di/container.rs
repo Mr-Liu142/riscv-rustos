@@ -10,7 +10,7 @@ use crate::trap::ds::{
 };
 use super::traits::{
     TrapHandlerInterface, ContextManagerInterface, 
-    HardwareControlInterface, TrapSystemConfig
+    HardwareControlInterface, TrapSystemConfig, ErrorManagerInterface
 };
 
 /// Static reference pointer implementation without heap allocation
@@ -68,16 +68,17 @@ const MAX_TRAP_HANDLERS: usize = 32;
 ///
 /// This is the main container for the trap system,
 /// managing dependencies and their lifecycle.
-pub struct TrapSystem<C: ContextManagerInterface, H: HardwareControlInterface> {
+pub struct TrapSystem<C: ContextManagerInterface, H: HardwareControlInterface, E: ErrorManagerInterface> {
     /// Context manager implementation
     context_manager: StaticRef<C>,
     
     /// Hardware control implementation
     hardware_control: StaticRef<H>,
     
+    /// Error manager implementation
+    error_manager: StaticRef<E>,
+    
     /// Registered trap handlers
-    ///
-    /// Using fixed-size array instead of Vec to avoid heap allocation
     handlers: [Option<&'static dyn TrapHandlerInterface>; MAX_TRAP_HANDLERS],
     
     /// Number of registered handlers
@@ -87,11 +88,12 @@ pub struct TrapSystem<C: ContextManagerInterface, H: HardwareControlInterface> {
     config: &'static dyn TrapSystemConfig,
 }
 
-impl<C: ContextManagerInterface, H: HardwareControlInterface> TrapSystem<C, H> {
+impl<C: ContextManagerInterface, H: HardwareControlInterface, E: ErrorManagerInterface> TrapSystem<C, H, E> {
     /// Create a new trap system with the given components
     pub const fn new(
         context_manager: StaticRef<C>,
         hardware_control: StaticRef<H>,
+        error_manager: StaticRef<E>,
         config: &'static dyn TrapSystemConfig,
     ) -> Self {
         // Initialize with empty handlers
@@ -100,6 +102,7 @@ impl<C: ContextManagerInterface, H: HardwareControlInterface> TrapSystem<C, H> {
         Self {
             context_manager,
             hardware_control,
+            error_manager,
             handlers: [NONE_HANDLER; MAX_TRAP_HANDLERS],
             handler_count: 0,
             config,
@@ -324,6 +327,16 @@ impl<C: ContextManagerInterface, H: HardwareControlInterface> TrapSystem<C, H> {
     /// Get hardware control implementation
     pub fn get_hardware_control(&self) -> &H {
         unsafe { self.hardware_control.get() }
+    }
+
+    /// Get error manager implementation
+    pub fn get_error_manager(&self) -> &E {
+        unsafe { self.error_manager.get() }
+    }
+    
+    /// Get mutable error manager implementation
+    pub fn get_error_manager_mut(&self) -> &mut E {
+        unsafe { self.error_manager.get_mut() }
     }
     
     /// Count handlers registered for a specific trap type

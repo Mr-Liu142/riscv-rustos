@@ -74,6 +74,9 @@ fn _start() -> ! {
 fn rust_main() -> ! {
     println!("Hello, RISC-V RustOS!");
 
+    // 初始化中断系统
+    trap::init();  // 这应该内部调用DI系统的初始化
+
 
     // 初始化中断系统
     trap::init();
