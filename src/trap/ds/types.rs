@@ -1,19 +1,19 @@
-//! 中断系统类型定义
+//! Trap system type definitions
 //!
-//! 定义中断系统所需的各种枚举类型和标志
+//! Defines various enum types and flags needed for the trap system
 
 use core::fmt;
 
-/// 中断模式枚举
+/// Trap mode enum
 #[derive(Debug, Copy, Clone)]
 pub enum TrapMode {
-    /// 直接模式 - 所有中断使用同一个处理函数
+    /// Direct mode - all traps use the same handler function
     Direct = 0,
-    /// 向量模式 - 不同中断类型使用不同处理函数
+    /// Vectored mode - different trap types use different handler functions
     Vectored = 1,
 }
 
-/// 中断类型枚举 - 只包含S模式下可用的中断
+/// Interrupt type enum - only includes interrupts available in S mode
 #[derive(Debug, Copy, Clone)]
 pub enum Interrupt {
     SupervisorSoft = 1,
@@ -21,7 +21,7 @@ pub enum Interrupt {
     SupervisorExternal = 9,
 }
 
-/// 异常类型枚举
+/// Exception type enum
 #[derive(Debug, Copy, Clone)]
 pub enum Exception {
     InstructionMisaligned = 0,
@@ -39,8 +39,8 @@ pub enum Exception {
     StorePageFault = 15,
 }
 
-/// 综合中断类型枚举
-#[derive(Debug, Copy, Clone)]
+/// Comprehensive trap type enum
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum TrapType {
     TimerInterrupt,
     ExternalInterrupt,
@@ -54,34 +54,34 @@ pub enum TrapType {
     Unknown,
 }
 
-/// 中断原因封装
+/// Trap cause wrapper
 #[derive(Copy, Clone)]
 pub struct TrapCause {
     bits: usize,
 }
 
 impl TrapCause {
-    /// 从原始值创建中断原因
+    /// Create trap cause from raw bits
     pub const fn from_bits(bits: usize) -> Self {
         Self { bits }
     }
     
-    /// 获取原始值
+    /// Get raw bits
     pub const fn bits(&self) -> usize {
         self.bits
     }
     
-    /// 判断是否为中断（而非异常）
+    /// Check if this is an interrupt (vs exception)
     pub fn is_interrupt(&self) -> bool {
         self.bits & (1 << (core::mem::size_of::<usize>() * 8 - 1)) != 0
     }
     
-    /// 获取中断/异常代码
+    /// Get the interrupt/exception code
     pub fn code(&self) -> usize {
         self.bits & !(1 << (core::mem::size_of::<usize>() * 8 - 1))
     }
     
-    /// 转换为TrapType
+    /// Convert to TrapType
     pub fn to_trap_type(&self) -> TrapType {
         if self.is_interrupt() {
             match self.code() {
@@ -112,10 +112,10 @@ impl fmt::Debug for TrapCause {
 }
 
 impl TrapType {
-    /// 中断类型的数量
-    pub const COUNT: usize = 10; // 包括所有已定义的类型
+    /// Number of trap types
+    pub const COUNT: usize = 10; // Includes all defined types
     
-    /// 从索引转换为中断类型
+    /// Convert from index to trap type
     pub fn from_index(index: usize) -> Self {
         match index {
             0 => TrapType::TimerInterrupt,

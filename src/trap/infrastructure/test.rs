@@ -1,50 +1,51 @@
-//! 中断系统测试模块
+//! Trap system test module
 
 use crate::println;
 use super::vector;
 use super::context;
-use super::registry; // 添加对registry模块的引用
-use crate::trap::ds::{TrapMode, TaskContext};
-use crate::trap::{TrapContext, TrapHandlerResult, TrapType}; // 添加对所需类型的引用
+use super::registry;
+use super::di;
+use crate::trap::ds::{TrapMode, TaskContext, get_context_manager, get_interrupt_nest_level, is_in_interrupt_context};
+use crate::trap::{TrapContext, TrapHandlerResult, TrapType};
 
-/// 测试中断向量初始化
+/// Test trap vector initialization
 pub fn test_vector_init() {
     println!("Testing trap vector initialization...");
     vector::init(TrapMode::Direct);
     println!("Trap vector initialized successfully");
 }
 
-/// 测试中断开关功能
+/// Test interrupt control functionality
 pub fn test_interrupt_control() {
     println!("Testing interrupt control...");
     
-    // 保存当前中断状态
+    // Save current interrupt state
     let was_enabled = vector::disable_interrupts();
     println!("Interrupts disabled, previous state: {}", was_enabled);
     
-    // 启用中断
+    // Enable interrupts
     vector::enable_interrupts();
     println!("Interrupts enabled");
     
-    // 再次禁用中断
+    // Disable interrupts again
     let new_state = vector::disable_interrupts();
     println!("Interrupts disabled again, state was: {}", new_state);
     assert!(new_state, "Interrupt should have been enabled");
     
-    // 恢复原始状态
+    // Restore original state
     vector::restore_interrupts(was_enabled);
     println!("Interrupt state restored to original");
 }
 
-/// 测试上下文管理功能
+/// Test context management functionality
 pub fn test_context_management() {
     println!("Testing context management...");
     
-    // 创建两个任务上下文
+    // Create two task contexts
     let mut ctx1 = TaskContext::new();
     let mut ctx2 = TaskContext::new();
     
-    // 模拟两个不同的任务入口点函数
+    // Simulate two different task entry point functions
     extern "C" fn test_task1() {
         println!("Task 1 is running");
     }
@@ -53,7 +54,7 @@ pub fn test_context_management() {
         println!("Task 2 is running");
     }
     
-    // 设置入口点和栈
+    // Set entry points and stacks
     static mut STACK1: [u8; 4096] = [0; 4096];
     static mut STACK2: [u8; 4096] = [0; 4096];
     
@@ -70,15 +71,16 @@ pub fn test_context_management() {
     println!("Context 2 prepared: ra=0x{:x}, sp=0x{:x}", 
              ctx2.get_ra(), ctx2.get_sp());
     
-    // 由于实际的上下文切换会改变执行流，我们只测试结构是否正确
+    // Since actual context switching would change execution flow,
+    // we just test that the structure is correct
     println!("Context management test completed");
 }
 
-/// 测试陷阱上下文创建和操作
+/// Test trap context creation and operations
 pub fn test_trap_context() {
     println!("Testing trap context functionality...");
     
-    // 创建一个测试用的陷阱上下文
+    // Create a test trap context
     let test_pc = 0x80200000;
     let test_sp = 0x81000000;
     let ctx = context::create_test_context(test_pc, test_sp);
@@ -86,14 +88,13 @@ pub fn test_trap_context() {
     println!("Created test trap context PC=0x{:x}, SP=0x{:x}", 
              ctx.sepc, ctx.x[2]);
     
-    // 测试陷阱上下文基本操作
+    // Test basic trap context operations
     let cause = ctx.get_cause();
     println!("Trap cause: is_interrupt={}, code={}", 
              cause.is_interrupt(), cause.code());
     
     println!("Trap context test completed");
 }
-
 
 /// Test the interrupt handler registry functionality
 pub fn test_handler_registry() {
@@ -153,28 +154,28 @@ pub fn test_handler_registry() {
 pub fn test_context_manager() {
     println!("Testing context manager...");
     
-    // 获取全局上下文管理器
-    let manager = crate::trap::get_context_manager();
+    // Get global context manager
+    let manager = crate::trap::ds::get_context_manager();
     
-    // 测试上下文大小查询
+    // Test context size queries
     let task_size = manager.get_context_size(crate::trap::ContextType::Task);
     let trap_size = manager.get_context_size(crate::trap::ContextType::Trap);
     
     println!("Context sizes: task={} bytes, trap={} bytes", task_size, trap_size);
     
-    // 测试中断栈使用情况
+    // Test interrupt stack usage
     let (used, total) = manager.get_interrupt_stack_usage();
     println!("Interrupt stack usage: {}/{} bytes", used, total);
     
-    // 模拟中断嵌套
-    let nest_level = crate::trap::get_interrupt_nest_level();
+    // Simulate interrupt nesting
+    let nest_level = crate::trap::ds::get_interrupt_nest_level();
     println!("Current interrupt nest level: {}", nest_level);
     
-    // 测试是否在中断上下文中
-    let in_interrupt = crate::trap::is_in_interrupt_context();
+    // Test if in interrupt context
+    let in_interrupt = crate::trap::ds::is_in_interrupt_context();
     println!("In interrupt context: {}", in_interrupt);
     
-    // 测试创建任务上下文
+    // Test task context creation
     let task_entry = 0x80200000;
     let user_stack = 0x81000000;
     let kernel_stack = 0x82000000;
@@ -185,20 +186,26 @@ pub fn test_context_manager() {
     println!("Context manager test completed");
 }
 
-/// 运行所有测试
+/// Run all tests
 pub fn run_all_tests() {
     println!("=== Starting trap infrastructure tests ===");
+    
+    // Run original tests
     test_vector_init();
     test_interrupt_control();
     test_context_management();
     test_trap_context();
     test_handler_registry();
-
-    // 运行上下文切换测试
     context::test_context_switch();
-
-     // 运行上下文管理器测试
-     test_context_manager();
+    test_context_manager();
+    
+    // Run DI system tests
+    println!("\n=== Starting dependency injection tests ===");
+    // Run DI system tests if they're available
+    if di::get_trap_system_initialized() {
+        println!("\n=== Starting dependency injection tests ===");
+        di::test::run_all_tests();
+    }
     
     println!("=== All trap tests completed successfully ===");
 }

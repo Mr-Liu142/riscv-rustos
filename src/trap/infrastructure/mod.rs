@@ -1,18 +1,17 @@
-//! 中断基础设施模块
+//! Trap system infrastructure module
 //!
-//! 提供中断系统基础功能和API
+//! Provides the core functionality and API for the trap system
 
 mod vector;
-mod context; // 现在已实现上下文管理
-mod registry; // 新增：处理器注册模块
-//mod handler; // 将在后续实现 
-//mod csr;     // 将在后续实现
-pub mod test; // 测试功能公开
+mod context;
+mod registry;
+pub mod test;
+pub mod di;  // New dependency injection module
 
 use crate::println;
 use crate::trap::ds::{TrapContext, TaskContext, TrapMode, Interrupt, Exception, TrapType, TrapHandlerResult, TrapError};
 
-// 对外导出API
+// Export APIs from submodules
 pub use vector::{
     init, 
     enable_interrupts, 
@@ -26,7 +25,7 @@ pub use vector::{
     clear_soft_interrupt,
 };
 
-// 导出上下文管理API
+// Export context management API
 pub use context::{
     task_switch,
     prepare_task_context,
@@ -37,7 +36,7 @@ pub use context::{
     test_context_switch,
 };
 
-// 导出处理器注册API
+// Export handler registry API
 pub use registry::{
     register_handler,
     unregister_handler,
@@ -46,30 +45,30 @@ pub use registry::{
     print_handlers,
 };
 
-/// 初始化中断系统
+/// Initialize the trap system
 ///
-/// 这个函数完成基础中断系统的初始化工作
+/// This function initializes the basic trap system
 pub fn init_trap_system() {
-    // 初始化中断向量表，使用直接模式
+    // Initialize the trap vector with direct mode
     vector::init(TrapMode::Direct);
 
-    // 注册默认处理器
+    // Register default handlers
     register_default_handlers();
     
     println!("Trap infrastructure initialized");
 }
 
-/// 注册默认处理器
+/// Register default handlers
 fn register_default_handlers() {
-    // 时钟中断默认处理器
+    // Timer interrupt default handler
     registry::register_handler(
         TrapType::TimerInterrupt,
         default_timer_handler,
-        100, // 低优先级，允许用户注册更高优先级的处理器
+        100, // Low priority, allows user to register higher priority handlers
         "Default Timer Handler"
     );
     
-    // 软件中断默认处理器
+    // Software interrupt default handler
     registry::register_handler(
         TrapType::SoftwareInterrupt,
         default_software_handler,
@@ -77,7 +76,7 @@ fn register_default_handlers() {
         "Default Software Handler"
     );
     
-    // 外部中断默认处理器
+    // External interrupt default handler
     registry::register_handler(
         TrapType::ExternalInterrupt,
         default_external_handler,
@@ -85,7 +84,7 @@ fn register_default_handlers() {
         "Default External Handler"
     );
     
-    // 系统调用默认处理器
+    // System call default handler
     registry::register_handler(
         TrapType::SystemCall,
         default_syscall_handler,
@@ -93,7 +92,7 @@ fn register_default_handlers() {
         "Default System Call Handler"
     );
     
-    // 页面错误默认处理器
+    // Page fault default handlers
     registry::register_handler(
         TrapType::InstructionPageFault,
         default_page_fault_handler,
@@ -113,7 +112,7 @@ fn register_default_handlers() {
         "Default Page Fault Handler"
     );
     
-    // 非法指令默认处理器
+    // Illegal instruction default handler
     registry::register_handler(
         TrapType::IllegalInstruction,
         default_illegal_instruction_handler,
@@ -121,7 +120,7 @@ fn register_default_handlers() {
         "Default Illegal Instruction Handler"
     );
     
-    // 未知中断默认处理器
+    // Unknown trap default handler
     registry::register_handler(
         TrapType::Unknown,
         default_unknown_handler,
@@ -130,7 +129,7 @@ fn register_default_handlers() {
     );
 }
 
-// 默认处理器实现
+// Default handler implementations
 fn default_timer_handler(ctx: &mut TrapContext) -> TrapHandlerResult {
     println!("Timer interrupt occurred");
     TrapHandlerResult::Handled
@@ -149,23 +148,23 @@ fn default_external_handler(ctx: &mut TrapContext) -> TrapHandlerResult {
 
 fn default_syscall_handler(ctx: &mut TrapContext) -> TrapHandlerResult {
     println!("System call occurred");
-    // 系统调用返回时，PC需要加4跳过ecall指令
+    // System calls need to advance PC past the ecall instruction
     ctx.set_return_addr(ctx.sepc + 4);
     TrapHandlerResult::Handled
 }
 
 fn default_page_fault_handler(ctx: &mut TrapContext) -> TrapHandlerResult {
-    println!("页错误发生，地址: {:#x}", ctx.stval);
+    println!("Page fault occurred, address: {:#x}", ctx.stval);
     TrapHandlerResult::Handled
 }
 
 fn default_illegal_instruction_handler(ctx: &mut TrapContext) -> TrapHandlerResult {
-    println!("非法指令: {:#x}", ctx.stval);
+    println!("Illegal instruction: {:#x}", ctx.stval);
     TrapHandlerResult::Handled
 }
 
 fn default_unknown_handler(ctx: &mut TrapContext) -> TrapHandlerResult {
-    println!("未知中断: cause={:#x}, addr={:#x}", ctx.scause, ctx.stval);
+    println!("Unknown trap: cause={:#x}, addr={:#x}", ctx.scause, ctx.stval);
     TrapHandlerResult::Handled
 }
 
@@ -177,22 +176,26 @@ fn default_unknown_handler(ctx: &mut TrapContext) -> TrapHandlerResult {
 /// # Parameters
 /// 
 /// * `context` - Pointer to the trap context saved by the assembly entry point
-/// 中断处理函数
-/// 
-/// 参数为指向上下文结构的指针
 #[no_mangle]
 pub extern "C" fn handle_trap(context: *mut TrapContext) {
-    // 通过上下文管理器创建中断守卫
+    // If the DI system is initialized, use it
+    if di::get_trap_system_initialized() {
+        // DI system will handle the trap
+        di::internal_handle_trap(context);
+        return;
+    }
+    
+    // Otherwise, fall back to the original implementation
     let mut ctx = unsafe { &mut *context };
     let cause = ctx.get_cause();
     
-    // 记录当前嵌套层级
+    // Record current nesting level
     let nest_level = crate::trap::ds::get_interrupt_nest_level();
     
-    // 转换中断/异常为TrapType
+    // Convert trap/exception to TrapType
     let trap_type = cause.to_trap_type();
     
-    // 记录中断发生
+    // Record trap occurrence
     if cause.is_interrupt() {
         println!("Interrupt occurred: {:?}, code: {}, nest level: {}", 
                  trap_type, cause.code(), nest_level);
@@ -201,17 +204,17 @@ pub extern "C" fn handle_trap(context: *mut TrapContext) {
                  trap_type, cause.code(), ctx.stval, nest_level);
     }
     
-    // 分发给注册的处理器
+    // Dispatch to registered handlers
     match registry::dispatch_trap(trap_type, ctx) {
         TrapHandlerResult::Handled => {
-            // 处理成功，无需额外操作
+            // Successfully handled
             println!("Interrupt handled successfully by registered handler");
         },
         TrapHandlerResult::Pass => {
-            // 所有处理器都传递了此中断，使用默认处理
+            // All handlers passed this interrupt
             println!("All handlers passed the interrupt: {:?}", trap_type);
             
-            // 默认处理逻辑...
+            // Default handling logic...
             if cause.is_interrupt() {
                 match trap_type {
                     TrapType::TimerInterrupt => {
@@ -228,11 +231,11 @@ pub extern "C" fn handle_trap(context: *mut TrapContext) {
                     }
                 }
             } else {
-                // 异常处理
+                // Exception handling
                 match trap_type {
                     TrapType::SystemCall => {
                         println!("Fallback handling for system call");
-                        // 系统调用返回时，PC需要加4跳过ecall指令
+                        // System calls need to advance PC past the ecall instruction
                         ctx.set_return_addr(ctx.sepc + 4);
                     },
                     TrapType::InstructionPageFault | 
@@ -247,7 +250,7 @@ pub extern "C" fn handle_trap(context: *mut TrapContext) {
             }
         },
         TrapHandlerResult::Failed(err) => {
-            // 处理失败
+            // Handling failed
             println!("Failed to handle interrupt: {:?}, error: {:?}", trap_type, err);
         }
     }
