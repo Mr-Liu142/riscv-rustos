@@ -51,6 +51,7 @@ pub enum TrapType {
     StorePageFault,
     InstructionAccessFault,
     IllegalInstruction,
+    Breakpoint,     // 新增断点类型
     Unknown,
 }
 
@@ -98,6 +99,7 @@ impl TrapCause {
                 15 => TrapType::StorePageFault,
                 1 => TrapType::InstructionAccessFault,
                 2 => TrapType::IllegalInstruction,
+                3 => TrapType::Breakpoint,    // 新增断点异常映射
                 _ => TrapType::Unknown,
             }
         }
@@ -127,6 +129,7 @@ impl TrapType {
             6 => TrapType::StorePageFault,
             7 => TrapType::InstructionAccessFault,
             8 => TrapType::IllegalInstruction,
+            9 => TrapType::Breakpoint,    // 新增断点映射
             _ => TrapType::Unknown,
         }
     }

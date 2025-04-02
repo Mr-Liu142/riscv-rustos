@@ -9,6 +9,8 @@ pub mod test;
 pub mod di;  // New dependency injection module
 pub mod error_handler;  // Error handling module
 pub mod error_test;  // Error handling tests
+pub mod enhanced_handlers;  // 增强型异常处理器
+pub mod test_enhanced;  // 增强型异常处理器测试
 
 use crate::println;
 use crate::trap::ds::{TrapContext, TaskContext, TrapMode, Interrupt, Exception, TrapType, TrapHandlerResult, TrapError};
@@ -135,6 +137,14 @@ fn register_default_handlers() {
         100,
         "Default Illegal Instruction Handler"
     );
+
+    // Breakpoint default handler
+    registry::register_handler(
+        TrapType::Breakpoint,
+        default_breakpoint_handler,
+        100,
+        "Default Breakpoint Handler"
+    );
     
     // Unknown trap default handler
     registry::register_handler(
@@ -176,6 +186,13 @@ fn default_page_fault_handler(ctx: &mut TrapContext) -> TrapHandlerResult {
 
 fn default_illegal_instruction_handler(ctx: &mut TrapContext) -> TrapHandlerResult {
     println!("Illegal instruction: {:#x}", ctx.stval);
+    TrapHandlerResult::Handled
+}
+
+fn default_breakpoint_handler(ctx: &mut TrapContext) -> TrapHandlerResult {
+    println!("Breakpoint occurred at: {:#x}", ctx.sepc);
+    // 断点处理需要手动前进PC
+    ctx.set_return_addr(ctx.sepc + 4);
     TrapHandlerResult::Handled
 }
 

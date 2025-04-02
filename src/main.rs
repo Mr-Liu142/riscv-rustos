@@ -85,6 +85,10 @@ fn rust_main() -> ! {
     println!("Starting trap system tests...");
     trap::infrastructure::test::run_all_tests();
     println!("Trap system tests completed");
+
+    println!("Starting enhanced exception handlers tests...");
+    trap::infrastructure::test_enhanced::run_all_tests();
+    println!("Enhanced exception handlers tests completed");
     
     
     // 使用新封装的系统信息功能

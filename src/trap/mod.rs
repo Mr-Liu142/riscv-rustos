@@ -64,6 +64,9 @@ pub fn init() {
 
     // Initialize error handling system
     infrastructure::error_handler::init();
+
+    // 注册增强型异常处理器
+    infrastructure::enhanced_handlers::register_enhanced_handlers();
     
     println!("Trap system fully initialized");
 }

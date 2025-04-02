@@ -220,7 +220,7 @@ pub fn get_trap_system() -> &'static TrapSystem<StandardContextManager, RiscvHar
 }
 
 // Maximum number of custom handlers we can support
-const MAX_CUSTOM_HANDLERS: usize = 16;
+const MAX_CUSTOM_HANDLERS: usize = 32;
 
 // Static storage for custom handlers - pre-initialized with None
 static mut CUSTOM_HANDLERS: [Option<&'static StandardTrapHandler>; MAX_CUSTOM_HANDLERS] = [None; MAX_CUSTOM_HANDLERS];
