@@ -267,10 +267,39 @@ pub fn get_trap_system_initialized() -> bool {
 // Maximum number of custom handlers we can support
 const MAX_CUSTOM_HANDLERS: usize = 32;
 
+/// 中断处理器注册表状态
+/// 
+/// 封装所有与处理器注册相关的状态，便于通过单一锁保护
+pub struct DiHandlerRegistryState {
+    /// 处理器存储 - 保存所有注册的处理器实例
+    storage: [Option<StandardTrapHandler>; MAX_CUSTOM_HANDLERS],
+    /// 处理器引用 - 指向存储中处理器的静态引用
+    handlers: [Option<&'static StandardTrapHandler>; MAX_CUSTOM_HANDLERS],
+    /// 当前注册的处理器数量
+    count: usize,
+}
+
+impl DiHandlerRegistryState {
+    /// 创建新的处理器注册表状态
+    pub const fn new() -> Self {
+        const NONE_HANDLER: Option<StandardTrapHandler> = None;
+        const NONE_REF: Option<&'static StandardTrapHandler> = None;
+        
+        Self {
+            storage: [NONE_HANDLER; MAX_CUSTOM_HANDLERS],
+            handlers: [NONE_REF; MAX_CUSTOM_HANDLERS],
+            count: 0,
+        }
+    }
+}
+
 // Static storage for custom handlers - thread-safe using Mutex and atomic counter
-static CUSTOM_HANDLERS: Mutex<[Option<&'static StandardTrapHandler>; MAX_CUSTOM_HANDLERS]> = Mutex::new([None; MAX_CUSTOM_HANDLERS]);
-static HANDLER_STORAGE: Mutex<[Option<StandardTrapHandler>; MAX_CUSTOM_HANDLERS]> = Mutex::new([None; MAX_CUSTOM_HANDLERS]);
-static CUSTOM_HANDLER_COUNT: AtomicUsize = AtomicUsize::new(0);
+//static CUSTOM_HANDLERS: Mutex<[Option<&'static StandardTrapHandler>; MAX_CUSTOM_HANDLERS]> = Mutex::new([None; MAX_CUSTOM_HANDLERS]);
+//static HANDLER_STORAGE: Mutex<[Option<StandardTrapHandler>; MAX_CUSTOM_HANDLERS]> = Mutex::new([None; MAX_CUSTOM_HANDLERS]);
+//static CUSTOM_HANDLER_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+// 替换为单一的受保护状态
+static HANDLER_REGISTRY: Mutex<DiHandlerRegistryState> = Mutex::new(DiHandlerRegistryState::new());
 
 /// Register a custom trap handler
 ///
@@ -283,13 +312,16 @@ pub fn register_handler(
     priority: u8,
     description: &'static str
 ) -> bool {
-    // Check if we've reached the maximum number of handlers
-    if CUSTOM_HANDLER_COUNT.load(Ordering::Relaxed) >= MAX_CUSTOM_HANDLERS {
+    // 获取注册表锁
+    let mut registry = HANDLER_REGISTRY.lock();
+    
+    // 检查是否已达到最大处理器数量
+    if registry.count >= MAX_CUSTOM_HANDLERS {
         println!("Cannot register handler: maximum number of custom handlers reached");
         return false;
     }
     
-    // Create the handler
+    // 创建处理器
     let handler = StandardTrapHandler::new(
         handler_fn,
         trap_type,
@@ -297,50 +329,93 @@ pub fn register_handler(
         description
     );
     
-    // Get current index and prepare for storage
-    let current_idx = CUSTOM_HANDLER_COUNT.load(Ordering::Relaxed);
+    // 获取当前索引并准备存储 - 使用局部变量避免借用冲突
+    let current_idx = registry.count;
     
-    // Store in our static array
-    {
-        let mut storage = HANDLER_STORAGE.lock();
-        storage[current_idx] = Some(handler);
-    }
+    // 存储在我们的数组中
+    registry.storage[current_idx] = Some(handler);
     
-    // Create static reference and store it
+    // 创建静态引用并存储 - 这仍需要unsafe，但在锁保护下进行
     let handler_ref: &'static StandardTrapHandler;
-    {
-        let storage = HANDLER_STORAGE.lock();
-        if let Some(ref h) = storage[current_idx] {
-            // This is safe because the storage lives for the entire program duration
-            handler_ref = unsafe { core::mem::transmute(h) };
+    unsafe {
+        if let Some(ref h) = registry.storage[current_idx] {
+            // 这是安全的，因为storage数组在整个程序生命周期内存在
+            handler_ref = core::mem::transmute(h);
+            registry.handlers[current_idx] = Some(handler_ref);
         } else {
             return false;
         }
     }
     
-    {
-        let mut refs = CUSTOM_HANDLERS.lock();
-        refs[current_idx] = Some(handler_ref);
-    }
-    
-    // Register with trap system
+    // 通过trap系统注册
     let result = with_trap_system_mut(|trap_system| {
         trap_system.register_handler(handler_ref)
     });
     
-    // Update counter if successful
+    // 如果成功，更新计数
     if result {
-        CUSTOM_HANDLER_COUNT.fetch_add(1, Ordering::SeqCst);
+        registry.count += 1;
     }
     
     result
 }
 
 /// Unregister a trap handler
+///
+/// # 并发安全性
+///
+/// 此函数同时更新trap系统和本地注册表状态，
+/// 确保在多核环境中的一致性
 pub fn unregister_handler(trap_type: TrapType, description: &'static str) -> bool {
-    with_trap_system_mut(|trap_system| {
+    // 首先通过trap系统注销
+    let result = with_trap_system_mut(|trap_system| {
         trap_system.unregister_handler(trap_type, description)
-    })
+    });
+    
+    // 如果成功，也从我们的注册表中移除
+    if result {
+        let mut registry = HANDLER_REGISTRY.lock();
+        
+        // 查找匹配的处理器
+        let mut found_idx = None;
+        for i in 0..registry.count {
+            if let Some(handler) = registry.handlers[i] {
+                if handler.get_trap_type() == trap_type && 
+                   handler.get_description() == description {
+                    // 找到匹配项
+                    found_idx = Some(i);
+                    break;
+                }
+            }
+        }
+        
+        // 如果找到处理器，移除它
+        if let Some(idx) = found_idx {
+            // 获取当前计数值
+            let current_count = registry.count;
+            
+            // 将所有后续元素前移
+            for j in idx..current_count-1 {
+                // 解决借用问题 - 先取出下一个元素
+                let next_storage = registry.storage[j+1].take();
+                let next_handler = registry.handlers[j+1].take();
+                
+                // 然后赋值给当前元素
+                registry.storage[j] = next_storage;
+                registry.handlers[j] = next_handler;
+            }
+            
+            // 清除最后一个位置 - 使用局部变量避免借用冲突
+            let last_idx = current_count - 1;
+            registry.storage[last_idx] = None;
+            registry.handlers[last_idx] = None;
+            
+            // 减少计数
+            registry.count -= 1;
+        }
+    }
+    
+    result
 }
 
 /// Get the number of handlers registered for a trap type
@@ -457,6 +532,34 @@ pub fn internal_handle_trap(context: *mut TrapContext) {
     with_trap_system(|trap_system| {
         trap_system.handle_trap(context);
     })
+}
+
+/// 获取自定义处理器数量
+///
+/// 返回通过DI系统注册的自定义处理器总数
+pub fn custom_handler_count() -> usize {
+    let registry = HANDLER_REGISTRY.lock();
+    registry.count
+}
+
+/// 打印所有注册的自定义处理器
+///
+/// 显示通过DI系统注册的所有处理器信息
+pub fn print_custom_handlers() {
+    let registry = HANDLER_REGISTRY.lock();
+    println!("=== Registered Custom Handlers ({}) ===", registry.count);
+    
+    for i in 0..registry.count {
+        if let Some(handler) = registry.handlers[i] {
+            println!("{}. {} (Type: {:?}, Priority: {})",
+                    i + 1,
+                    handler.get_description(),
+                    handler.get_trap_type(),
+                    handler.get_priority());
+        }
+    }
+    
+    println!("=======================================");
 }
 
 /// Register an error handler

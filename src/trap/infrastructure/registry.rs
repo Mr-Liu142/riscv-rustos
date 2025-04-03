@@ -4,6 +4,7 @@
 
 use crate::trap::ds::{TrapType, TrapContext, TrapHandler, HandlerEntry, TrapHandlerResult, TrapError};
 use crate::println;
+use spin::Mutex; // 新增这一行
 
 // 每种中断类型的最大处理器数量
 const MAX_HANDLERS_PER_TYPE: usize = 8;
@@ -47,7 +48,8 @@ pub struct HandlerRegistry {
 }
 
 // 全局静态注册表
-static mut REGISTRY: HandlerRegistry = HandlerRegistry::new();
+//static mut REGISTRY: HandlerRegistry = HandlerRegistry::new();
+static REGISTRY: Mutex<HandlerRegistry> = Mutex::new(HandlerRegistry::new());
 
 impl HandlerRegistry {
     /// 创建新的处理器注册表
@@ -224,9 +226,8 @@ pub fn register_handler(trap_type: TrapType, handler: TrapHandler, priority: u8,
     // 禁用中断以确保安全访问注册表
     let was_enabled = crate::trap::infrastructure::disable_interrupts();
     
-    let result = unsafe {
-        REGISTRY.register(trap_type, handler, priority, description)
-    };
+    let mut guard = REGISTRY.lock();
+    let result = guard.register(trap_type, handler, priority, description);
     
     // 恢复中断状态
     crate::trap::infrastructure::restore_interrupts(was_enabled);
@@ -239,9 +240,8 @@ pub fn unregister_handler(trap_type: TrapType, description: &'static str) -> boo
     // 禁用中断以确保安全访问注册表
     let was_enabled = crate::trap::infrastructure::disable_interrupts();
     
-    let result = unsafe {
-        REGISTRY.unregister(trap_type, description)
-    };
+    let mut guard = REGISTRY.lock();
+    let result = guard.unregister(trap_type, description);
     
     // 恢复中断状态
     crate::trap::infrastructure::restore_interrupts(was_enabled);
@@ -251,10 +251,10 @@ pub fn unregister_handler(trap_type: TrapType, description: &'static str) -> boo
 
 /// 分发中断到已注册的处理器
 pub fn dispatch_trap(trap_type: TrapType, ctx: &mut TrapContext) -> TrapHandlerResult {
-    // 注意：这个函数可能在已禁用中断的情况下调用，所以不要在此处禁用中断
-    unsafe {
-        REGISTRY.dispatch(trap_type, ctx)
-    }
+    // 注意：这个函数可能在已禁用中断的情况下调用
+    // 在中断上下文中使用锁时需特别小心
+    let guard = REGISTRY.lock();
+    guard.dispatch(trap_type, ctx)
 }
 
 /// 获取特定中断类型的处理器数量
@@ -262,9 +262,8 @@ pub fn handler_count(trap_type: TrapType) -> usize {
     // 禁用中断以确保安全访问注册表
     let was_enabled = crate::trap::infrastructure::disable_interrupts();
     
-    let count = unsafe {
-        REGISTRY.handler_count(trap_type)
-    };
+    let guard = REGISTRY.lock();
+    let count = guard.handler_count(trap_type);
     
     // 恢复中断状态
     crate::trap::infrastructure::restore_interrupts(was_enabled);
@@ -277,9 +276,8 @@ pub fn print_handlers() {
     // 禁用中断以确保安全访问注册表
     let was_enabled = crate::trap::infrastructure::disable_interrupts();
     
-    unsafe {
-        REGISTRY.print_handlers();
-    }
+    let guard = REGISTRY.lock();
+    guard.print_handlers();
     
     // 恢复中断状态
     crate::trap::infrastructure::restore_interrupts(was_enabled);
