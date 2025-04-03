@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 riscv = { version = "0.13.0" }
 sbi-rt = { version = "0.0.3", features = ["legacy"] }
+spin = "0.9.8"  # 添加spin依赖
 
 [profile.dev]
 panic = "abort"

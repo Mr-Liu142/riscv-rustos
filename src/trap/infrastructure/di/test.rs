@@ -37,7 +37,7 @@ pub fn test_initialization() {
     // Initialize the trap system with direct mode
     initialize_trap_system(crate::trap::ds::TrapMode::Direct);
     
-    // Verify system state
+    // Verify system state using public API functions
     let in_interrupt = is_in_interrupt_context();
     let nest_level = get_interrupt_nest_level();
     

@@ -22,6 +22,17 @@ pub struct StaticRef<T> {
 }
 
 impl<T> StaticRef<T> {
+    /// Create a new static reference from a mutable pointer
+    ///
+    /// # Safety
+    ///
+    /// This is safe because we ensure exclusive access through the Mutex
+    pub fn new(ptr: *mut T) -> Self {
+        Self {
+            data: ptr,
+        }
+    }
+    
     /// Create a new static reference from a mutable pointer to static data
     ///
     /// # Safety
