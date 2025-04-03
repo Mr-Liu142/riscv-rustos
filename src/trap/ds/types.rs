@@ -52,6 +52,11 @@ pub enum TrapType {
     InstructionAccessFault,
     IllegalInstruction,
     Breakpoint,     // 新增断点类型
+    InstructionMisaligned,
+    LoadMisaligned,
+    StoreMisaligned,
+    LoadAccessFault,     // 新增：加载访问错误
+    StoreAccessFault,    // 新增：存储访问错误
     Unknown,
 }
 
@@ -97,9 +102,14 @@ impl TrapCause {
                 12 => TrapType::InstructionPageFault,
                 13 => TrapType::LoadPageFault,
                 15 => TrapType::StorePageFault,
+                0 => TrapType::InstructionMisaligned,  // 新增：指令地址未对齐映射
                 1 => TrapType::InstructionAccessFault,
                 2 => TrapType::IllegalInstruction,
                 3 => TrapType::Breakpoint,    // 新增断点异常映射
+                4 => TrapType::LoadMisaligned,         // 新增：加载地址未对齐映射
+                5 => TrapType::LoadAccessFault,    // 正确映射：加载访问错误
+                6 => TrapType::StoreMisaligned,        // 新增：存储地址未对齐映射
+                7 => TrapType::StoreAccessFault,   // 正确映射：存储访问错误
                 _ => TrapType::Unknown,
             }
         }
@@ -115,7 +125,7 @@ impl fmt::Debug for TrapCause {
 
 impl TrapType {
     /// Number of trap types
-    pub const COUNT: usize = 10; // Includes all defined types
+    pub const COUNT: usize = 15; // Includes all defined types
     
     /// Convert from index to trap type
     pub fn from_index(index: usize) -> Self {
@@ -130,6 +140,11 @@ impl TrapType {
             7 => TrapType::InstructionAccessFault,
             8 => TrapType::IllegalInstruction,
             9 => TrapType::Breakpoint,    // 新增断点映射
+            10 => TrapType::InstructionMisaligned, // 新增
+            11 => TrapType::LoadMisaligned,        // 新增
+            12 => TrapType::StoreMisaligned,       // 新增
+            13 => TrapType::LoadAccessFault,
+            14 => TrapType::StoreAccessFault,
             _ => TrapType::Unknown,
         }
     }
