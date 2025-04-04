@@ -13,6 +13,7 @@ use super::traits::{
     HardwareControlInterface, TrapSystemConfig, ErrorManagerInterface
 };
 use super::impls::StandardTrapHandler;
+use super::context::ContextId;
 
 /// Static reference pointer implementation without heap allocation
 ///
@@ -74,7 +75,7 @@ unsafe impl<T: Send> Send for StaticRef<T> {}
 unsafe impl<T: Sync> Sync for StaticRef<T> {}
 
 /// Maximum number of trap handlers that can be registered
-const MAX_TRAP_HANDLERS: usize = 32;
+pub const MAX_TRAP_HANDLERS: usize = 32;
 
 /// Handler information structure
 #[derive(Copy, Clone)]
@@ -85,15 +86,18 @@ pub struct HandlerInfo {
     pub priority: u8,
     /// 处理器类型
     pub trap_type: TrapType,
+    /// 关联的上下文ID
+    pub context_id: Option<ContextId>,
 }
 
 impl HandlerInfo {
     /// 创建新的处理器信息
-    pub const fn new(index: usize, priority: u8, trap_type: TrapType) -> Self {
+    pub const fn new(index: usize, priority: u8, trap_type: TrapType, context_id: Option<ContextId>) -> Self {
         Self {
             index,
             priority,
             trap_type,
+            context_id,
         }
     }
 }
@@ -167,7 +171,8 @@ impl<C: ContextManagerInterface, H: HardwareControlInterface, E: ErrorManagerInt
         index: usize,
         priority: u8,
         trap_type: TrapType,
-        description: &'static str
+        description: &'static str,
+        context_id: Option<ContextId>
     ) -> bool {
         if self.handler_count >= MAX_TRAP_HANDLERS {
             println!("Cannot register handler: maximum number of handlers reached");
@@ -184,8 +189,8 @@ impl<C: ContextManagerInterface, H: HardwareControlInterface, E: ErrorManagerInt
             }
         }
 
-        // 创建 HandlerInfo 实例
-        let handler_info = HandlerInfo::new(index, priority, trap_type);
+        // 创建 HandlerInfo 实例，包含上下文ID
+        let handler_info = HandlerInfo::new(index, priority, trap_type, context_id);
 
         // 查找插入位置，基于trap_type和priority
         let mut insert_idx = self.handler_count;
@@ -211,8 +216,8 @@ impl<C: ContextManagerInterface, H: HardwareControlInterface, E: ErrorManagerInt
         self.handlers[insert_idx] = Some(handler_info);
         self.handler_count += 1;
 
-        println!("Registered trap handler: {} for {:?} with priority {} (index: {})",
-                 description, trap_type, priority, index);
+        println!("Registered trap handler: {} for {:?} with priority {} (index: {}, context_id: {:?})",
+                 description, trap_type, priority, index, context_id);
 
         true
     }
@@ -373,6 +378,43 @@ impl<C: ContextManagerInterface, H: HardwareControlInterface, E: ErrorManagerInt
             }
         }
     }
+
+    /// 注销指定上下文的所有处理器
+    /// 返回已注销的处理器存储索引数组
+    pub fn unregister_handlers_for_context(&mut self, context_id: ContextId) -> [Option<usize>; MAX_TRAP_HANDLERS] {
+        let mut storage_indices = [None; MAX_TRAP_HANDLERS];
+        let mut found_count = 0;
+        
+        // 找出所有匹配context_id的处理器
+        let mut indices_to_remove = [None; MAX_TRAP_HANDLERS];
+        
+        // 第一遍：找出所有需要移除的处理器索引
+        for i in 0..self.handler_count {
+            if let Some(handler_info) = self.handlers[i] {
+                if let Some(handler_ctx_id) = handler_info.context_id {
+                    if handler_ctx_id == context_id {
+                        // 记录处理器索引和存储索引
+                        if found_count < MAX_TRAP_HANDLERS {
+                            indices_to_remove[found_count] = Some(i);
+                            storage_indices[found_count] = Some(handler_info.index);
+                            found_count += 1;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 第二遍：从后向前注销处理器（避免索引移位问题）
+        for i in (0..found_count).rev() {
+            if let Some(index) = indices_to_remove[i] {
+                self.unregister_handler(index);
+            }
+        }
+        
+        println!("TrapSystem: Unregistered {} handlers for context ID: {}", found_count, context_id);
+        storage_indices
+    }
+
 
     /// Get context manager implementation
     pub fn get_context_manager(&self) -> &C {

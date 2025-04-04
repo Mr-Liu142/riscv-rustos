@@ -6,6 +6,7 @@
 use crate::println;
 use crate::trap::ds::{TrapContext, TrapHandlerResult, TrapCause, TrapType};
 use crate::util::sbi::system::{shutdown, ShutdownReason};
+use super::di::context::KERNEL_CONTEXT_ID;
 
 /// 通用异常处理函数，打印详细信息并停机
 ///
@@ -416,21 +417,24 @@ pub fn register_enhanced_handlers() {
         TrapType::InstructionPageFault,
         enhanced_instruction_page_fault_handler,
         10, // 高优先级
-        "Enhanced Instruction Page Fault Handler"
+        "Enhanced Instruction Page Fault Handler",
+        KERNEL_CONTEXT_ID
     );
     
     di::register_handler(
         TrapType::LoadPageFault,
         enhanced_load_page_fault_handler,
         10,
-        "Enhanced Load Page Fault Handler"
+        "Enhanced Load Page Fault Handler",
+        KERNEL_CONTEXT_ID
     );
     
     di::register_handler(
         TrapType::StorePageFault,
         enhanced_store_page_fault_handler,
         10,
-        "Enhanced Store Page Fault Handler"
+        "Enhanced Store Page Fault Handler",
+        KERNEL_CONTEXT_ID
     );
     
     // 注册非法指令处理器
@@ -438,7 +442,8 @@ pub fn register_enhanced_handlers() {
         TrapType::IllegalInstruction,
         enhanced_illegal_instruction_handler,
         10,
-        "Enhanced Illegal Instruction Handler"
+        "Enhanced Illegal Instruction Handler",
+        KERNEL_CONTEXT_ID
     );
     
     // 注册指令访问错误处理器
@@ -446,7 +451,8 @@ pub fn register_enhanced_handlers() {
         TrapType::InstructionAccessFault,
         enhanced_instruction_access_fault_handler,
         10,
-        "Enhanced Instruction Access Fault Handler"
+        "Enhanced Instruction Access Fault Handler",
+        KERNEL_CONTEXT_ID
     );
     
     // 注册断点处理器
@@ -454,7 +460,8 @@ pub fn register_enhanced_handlers() {
         TrapType::Breakpoint,
         enhanced_breakpoint_handler,
         10,
-        "Enhanced Breakpoint Handler"
+        "Enhanced Breakpoint Handler",
+        KERNEL_CONTEXT_ID
     );
     
     // 注册未知异常处理器
@@ -462,7 +469,8 @@ pub fn register_enhanced_handlers() {
         TrapType::Unknown,
         enhanced_unknown_handler,
         10,
-        "Enhanced Unknown Exception Handler"
+        "Enhanced Unknown Exception Handler",
+        KERNEL_CONTEXT_ID
     );
 
     // 注册未对齐地址处理器，分别注册三种类型
@@ -470,35 +478,40 @@ pub fn register_enhanced_handlers() {
         TrapType::InstructionMisaligned,
         enhanced_misaligned_handler,
         10,
-        "Enhanced Instruction Misaligned Handler"
+        "Enhanced Instruction Misaligned Handler",
+        KERNEL_CONTEXT_ID
     );
     
     di::register_handler(
         TrapType::LoadMisaligned,
         enhanced_misaligned_handler,
         10,
-        "Enhanced Load Misaligned Handler"
+        "Enhanced Load Misaligned Handler",
+        KERNEL_CONTEXT_ID
     );
     
     di::register_handler(
         TrapType::StoreMisaligned,
         enhanced_misaligned_handler,
         10,
-        "Enhanced Store Misaligned Handler"
+        "Enhanced Store Misaligned Handler",
+        KERNEL_CONTEXT_ID
     );
 
     di::register_handler(
         TrapType::LoadAccessFault,
         enhanced_memory_access_fault_handler,
         10,
-        "Enhanced Load Access Fault Handler"
+        "Enhanced Load Access Fault Handler",
+        KERNEL_CONTEXT_ID
     );
     
     di::register_handler(
         TrapType::StoreAccessFault,
         enhanced_memory_access_fault_handler,
         10,
-        "Enhanced Store Access Fault Handler"
+        "Enhanced Store Access Fault Handler",
+        KERNEL_CONTEXT_ID
     );
     
     

@@ -8,6 +8,10 @@ pub mod container;
 pub mod impls;
 pub mod test;  // Export test module
 pub mod concurrency_test;  // Export concurrency test module
+pub mod context;
+pub mod context_pool;
+
+use self::context::{ContextId, KERNEL_CONTEXT_ID};
 
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use spin::Mutex;
@@ -20,6 +24,7 @@ use crate::trap::ds::{
 };
 use self::impls::{StandardContextManager, RiscvHardwareControl, StandardTrapHandler};
 use self::traits::DefaultTrapSystemConfig;
+use self::container::MAX_TRAP_HANDLERS;
 
 /// Global trap system instance flag - atomic for thread safety
 static TRAP_SYSTEM_INITIALIZED: AtomicBool = AtomicBool::new(false);
@@ -173,7 +178,14 @@ fn register_default_handler(
     description: &'static str
 ) -> bool {
     // 加锁 HANDLER_STORAGE
-    let mut storage = HANDLER_STORAGE.lock();
+    let storage_result = HANDLER_STORAGE.try_lock();
+    let mut storage = match storage_result {
+        Some(guard) => guard,
+        None => {
+            println!("Cannot register default handler: storage lock busy");
+            return false;
+        }
+    };
 
     // 为默认处理器查找槽位 - 仅在预留范围内
     let mut idx = DEFAULT_HANDLER_END_IDX;
@@ -202,16 +214,19 @@ fn register_default_handler(
     // 释放锁，防止死锁
     drop(storage);
 
-    // 调用 trap_system 注册处理器
+    // 调用 trap_system 注册处理器 - 使用内核上下文ID
     let result = with_trap_system_mut(|trap_system| {
-        trap_system.register_handler(idx, priority, trap_type, description)
+        trap_system.register_handler(idx, priority, trap_type, description, KERNEL_CONTEXT_ID)
     });
 
     // 如果注册失败，回滚
     if !result {
-        let mut storage = HANDLER_STORAGE.lock();
-        storage[idx] = None;
-        println!("Failed to register default handler in trap system, rolling back storage");
+        if let Some(mut storage) = HANDLER_STORAGE.try_lock() {
+            storage[idx] = None;
+            println!("Failed to register default handler in trap system, rolling back storage");
+        } else {
+            println!("Warning: Failed to roll back handler registration, storage lock busy");
+        }
     }
 
     result
@@ -384,10 +399,24 @@ pub fn register_handler(
     trap_type: TrapType,
     handler_fn: fn(&mut TrapContext) -> TrapHandlerResult,
     priority: u8,
-    description: &'static str
+    description: &'static str,
+    context_id: Option<ContextId>
 ) -> bool {
+    // 检查trap系统是否初始化
+    if !get_trap_system_initialized() {
+        println!("Cannot register handler: trap system not initialized");
+        return false;
+    }
+
     // 加锁 HANDLER_STORAGE
-    let mut storage = HANDLER_STORAGE.lock();
+    let storage_result = HANDLER_STORAGE.try_lock();
+    let mut storage = match storage_result {
+        Some(guard) => guard,
+        None => {
+            println!("Cannot register handler: handler storage lock busy");
+            return false;
+        }
+    };
 
     // 检查传入的 description 在 HANDLER_STORAGE 中是否已存在
     for i in 0..MAX_CUSTOM_HANDLERS {
@@ -411,8 +440,8 @@ pub fn register_handler(
     }
 
     // 输出调试信息
-    println!("Handler registration: found slot at index {}, type {:?}, desc '{}'",
-             idx, trap_type, description);
+    println!("Handler registration: found slot at index {}, type {:?}, desc '{}', context_id: {:?}",
+             idx, trap_type, description, context_id);
 
     if idx == MAX_CUSTOM_HANDLERS {
         println!("Cannot register handler: no empty slots in storage (all {} slots are full)",
@@ -445,18 +474,88 @@ pub fn register_handler(
     drop(storage);
 
     // 调用 trap_system 注册处理器
-    let result = with_trap_system_mut(|trap_system| {
-        trap_system.register_handler(idx, priority, trap_type, description)
+    let trap_result = with_trap_system_mut(|trap_system| {
+        trap_system.register_handler(idx, priority, trap_type, description, context_id)
     });
 
     // 如果注册失败，回滚
-    if !result {
-        let mut storage = HANDLER_STORAGE.lock();
-        storage[idx] = None;
-        println!("Failed to register handler in trap system, rolling back storage");
+    if !trap_result {
+        if let Some(mut storage) = HANDLER_STORAGE.try_lock() {
+            storage[idx] = None;
+            println!("Failed to register handler in trap system, rolling back storage");
+        } else {
+            println!("Warning: Failed to roll back handler registration, storage lock busy");
+        }
+        return false;
     }
 
-    result
+    trap_result
+}
+
+// 添加一个便利函数，默认使用内核上下文
+/// 使用内核上下文注册中断处理器（便利函数）
+pub fn register_handler_with_kernel_context(
+    trap_type: TrapType,
+    handler_fn: fn(&mut TrapContext) -> TrapHandlerResult,
+    priority: u8,
+    description: &'static str
+) -> bool {
+    register_handler(trap_type, handler_fn, priority, description, KERNEL_CONTEXT_ID)
+}
+
+/// 注销指定上下文的所有中断处理器
+///
+/// # 参数
+///
+/// * `context_id` - 要注销处理器的上下文ID
+///
+/// # 返回值
+///
+/// 返回成功注销的处理器数量
+///
+/// # 并发安全性
+///
+/// 此函数使用锁和原子操作保护共享数据，在中断上下文或多核环境中安全。
+pub fn unregister_handlers_for_context(context_id: ContextId) -> usize {
+    // 如果trap系统未初始化，直接返回
+    if !get_trap_system_initialized() {
+        println!("Cannot unregister handlers: trap system not initialized");
+        return 0;
+    }
+    
+    // 使用TrapSystem的方法获取存储索引
+    let storage_indices = with_trap_system_mut(|trap_system| {
+        trap_system.unregister_handlers_for_context(context_id)
+    });
+    
+    // 清理HANDLER_STORAGE
+    let mut unregistered_count = 0;
+    let storage_guard = HANDLER_STORAGE.try_lock();
+    if let Some(mut storage) = storage_guard {
+        for i in 0..MAX_TRAP_HANDLERS {
+            if let Some(index) = storage_indices[i] {
+                if storage[index].is_some() {
+                    let handler_desc: &'static str = if let Some(ref handler) = storage[index] {
+                        handler.get_description()
+                    } else {
+                        "unknown"
+                    };
+                    
+                    storage[index] = None;
+                    println!("Unregistered handler at storage index {}: {}", index, handler_desc);
+                    unregistered_count += 1;
+                }
+            } else if i > 0 {
+                // 如果遇到None且不是第一个元素，说明已经处理完所有有效索引
+                break;
+            }
+        }
+    } else {
+        println!("Warning: Could not lock handler storage to clean up.");
+    }
+    
+    println!("Successfully unregistered {} handlers for context ID: {}", unregistered_count, context_id);
+    unregistered_count
 }
 
 /// Unregister a trap handler

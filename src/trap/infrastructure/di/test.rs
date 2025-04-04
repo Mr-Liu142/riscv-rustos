@@ -9,6 +9,8 @@ use super::{
     print_handlers, enable_interrupts, disable_interrupts,
     is_in_interrupt_context, get_interrupt_nest_level
 };
+use super::context::KERNEL_CONTEXT_ID;
+
 
 /// Test handler for timer interrupts
 fn test_timer_handler(ctx: &mut TrapContext) -> TrapHandlerResult {
@@ -56,21 +58,24 @@ pub fn test_handler_registration() {
         TrapType::TimerInterrupt,
         test_timer_handler,
         50, // Higher priority than default (100)
-        "Test Timer Handler"
+        "Test Timer Handler",
+        KERNEL_CONTEXT_ID
     );
     
     let result2 = register_handler(
         TrapType::SoftwareInterrupt,
         test_software_handler,
         50,
-        "Test Software Interrupt Handler"
+        "Test Software Interrupt Handler",
+        KERNEL_CONTEXT_ID
     );
     
     let result3 = register_handler(
         TrapType::SystemCall,
         test_syscall_handler,
         50,
-        "Test System Call Handler"
+        "Test System Call Handler",
+        KERNEL_CONTEXT_ID
     );
     
     println!("Registration results: {}, {}, {}", result1, result2, result3);
@@ -119,6 +124,8 @@ pub fn test_interrupt_control() {
     
     println!("Interrupt control test passed");
 }
+
+
 
 /// Run all trap system dependency injection tests
 pub fn run_all_tests() {

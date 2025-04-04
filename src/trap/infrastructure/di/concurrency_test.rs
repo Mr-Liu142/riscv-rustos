@@ -10,6 +10,8 @@ use super::{
     print_handlers, enable_interrupts, disable_interrupts,
     handler_count  // 明确从DI模块导入handler_count
 };
+use super::context::KERNEL_CONTEXT_ID;
+use super::context_pool;
 
 
 // 测试用原子计数器
@@ -70,7 +72,8 @@ pub fn test_concurrent_handler_registration() {
             TrapType::TimerInterrupt,
             test_concurrent_handler,
             priority,
-            desc
+            desc,
+            KERNEL_CONTEXT_ID
         );
 
         if result {
@@ -115,7 +118,8 @@ pub fn test_interrupt_concurrency() {
         TrapType::TimerInterrupt,
         test_concurrent_handler,
         30,
-        TEST_HANDLER_NAME
+        TEST_HANDLER_NAME,
+        KERNEL_CONTEXT_ID
     );
     assert!(register_result, "Failed to register test handler");
     println!("Test handler registered successfully");
@@ -218,9 +222,9 @@ pub fn test_handler_registry_safety() {
     println!("Simulating concurrent handler registration...");
 
     let results = [
-        register_handler(TrapType::TimerInterrupt, test_registry_handler1, 25, HANDLER1_DESC),
-        register_handler(TrapType::TimerInterrupt, test_registry_handler2, 26, HANDLER2_DESC),
-        register_handler(TrapType::TimerInterrupt, test_registry_handler3, 27, HANDLER3_DESC)
+        register_handler(TrapType::TimerInterrupt, test_registry_handler1, 25, HANDLER1_DESC, KERNEL_CONTEXT_ID),
+        register_handler(TrapType::TimerInterrupt, test_registry_handler2, 26, HANDLER2_DESC, KERNEL_CONTEXT_ID),
+        register_handler(TrapType::TimerInterrupt, test_registry_handler3, 27, HANDLER3_DESC, KERNEL_CONTEXT_ID)
     ];
 
     // 检查注册结果
@@ -251,7 +255,8 @@ pub fn test_handler_registry_safety() {
         TrapType::TimerInterrupt,
         test_registry_handler2,
         35, // 不同的优先级
-        HANDLER2_DESC // 相同的描述符
+        HANDLER2_DESC, // 相同的描述符
+        KERNEL_CONTEXT_ID
     );
     println!("Re-registered handler 2: {}", reregister_result);
     assert!(reregister_result, "Failed to re-register Handler 2"); // 应该成功
@@ -301,6 +306,68 @@ pub fn test_handler_registry_safety() {
     println!("Handler registry thread safety test passed");
 }
 
+/// 测试上下文感知的中断处理器功能
+pub fn test_context_aware_handlers() {
+    println!("Testing context-aware handler system...");
+
+    // 创建一个进程
+    let process_result = match context_pool::create_process(None) {
+        Ok(handle) => {
+            println!("Process created with ID: {}", handle.pid);
+
+            // 设置进程名称
+            if let Err(e) = handle.set_name("test_process") {
+                println!("Failed to set process name: {}", e);
+            }
+
+            // 定义一个测试处理器函数
+            fn test_process_handler(ctx: &mut TrapContext) -> TrapHandlerResult {
+                println!("Process-specific handler called");
+                TrapHandlerResult::Handled
+            }
+
+            // 为该进程注册一个处理器
+            match handle.register_handler(
+                TrapType::TimerInterrupt,
+                test_process_handler,
+                50,
+                "Process Test Handler"
+            ) {
+                Ok(result) => println!("Handler registration result: {}", result),
+                Err(e) => println!("Failed to register handler: {}", e),
+            }
+
+            Ok(handle)
+        },
+        Err(e) => {
+            println!("Failed to create process: {}", e);
+            Err(e)
+        }
+    };
+
+    // 打印当前处理器
+    print_handlers();
+
+    // 获取进程ID
+    let pid = match &process_result {
+        Ok(handle) => handle.pid,
+        Err(_) => 0,
+    };
+
+    // 销毁进程，应该自动触发处理器清理
+    if let Ok(_) = process_result {
+        match context_pool::destroy_process(pid) {
+            Ok(_) => println!("Process destroyed successfully"),
+            Err(e) => println!("Failed to destroy process: {}", e),
+        }
+    }
+
+    // 再次打印处理器，确认已清理
+    print_handlers();
+
+    println!("Context-aware handler test completed");
+}
+
 /// 运行所有并发安全测试
 pub fn run_all_concurrency_tests() {
     println!("=== Running DI System Concurrency Tests ===");
@@ -310,6 +377,7 @@ pub fn run_all_concurrency_tests() {
     test_interrupt_concurrency();
     test_lock_performance();
     test_handler_registry_safety();
+    test_context_aware_handlers();
 
     println!("=== All DI System Concurrency Tests Passed ===");
 }
