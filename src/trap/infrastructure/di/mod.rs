@@ -39,6 +39,19 @@ static TRAP_SYSTEM: Mutex<Option<TrapSystem<StandardContextManager, RiscvHardwar
 /// Static storage for error manager - protected by Mutex
 static ERROR_MANAGER: Mutex<StandardErrorManager> = Mutex::new(StandardErrorManager::new());
 
+/// Maximum number of custom handlers
+const MAX_CUSTOM_HANDLERS: usize = 64;
+
+/// Static storage for handler instances
+static HANDLER_STORAGE: Mutex<[Option<StandardTrapHandler>; MAX_CUSTOM_HANDLERS]> = {
+    const NONE_HANDLER: Option<StandardTrapHandler> = None;
+    Mutex::new([NONE_HANDLER; MAX_CUSTOM_HANDLERS])
+};
+
+/// 为默认处理器预留的存储槽位范围
+const DEFAULT_HANDLER_START_IDX: usize = 0;
+const DEFAULT_HANDLER_END_IDX: usize = 9; // 预留10个槽位给默认处理器
+
 /// Default handler implementations
 
 /// Timer interrupt handler
@@ -82,75 +95,19 @@ fn default_illegal_instruction_handler(ctx: &mut TrapContext) -> TrapHandlerResu
     TrapHandlerResult::Handled
 }
 
+/// Breakpoint handler
+fn default_breakpoint_handler(ctx: &mut TrapContext) -> TrapHandlerResult {
+    println!("Breakpoint occurred at: {:#x}", ctx.sepc);
+    // 断点处理需要手动前进PC
+    ctx.set_return_addr(ctx.sepc + 4);
+    TrapHandlerResult::Handled
+}
+
 /// Unknown trap handler
 fn default_unknown_handler(ctx: &mut TrapContext) -> TrapHandlerResult {
     println!("Unknown trap: cause={:#x}, addr={:#x}", ctx.scause, ctx.stval);
     TrapHandlerResult::Handled
 }
-
-/// Static default handlers
-static TIMER_HANDLER: StandardTrapHandler = StandardTrapHandler::new(
-    default_timer_handler,
-    TrapType::TimerInterrupt,
-    100,
-    "Default Timer Handler"
-);
-
-static SOFTWARE_HANDLER: StandardTrapHandler = StandardTrapHandler::new(
-    default_software_handler,
-    TrapType::SoftwareInterrupt,
-    100,
-    "Default Software Handler"
-);
-
-static EXTERNAL_HANDLER: StandardTrapHandler = StandardTrapHandler::new(
-    default_external_handler,
-    TrapType::ExternalInterrupt,
-    100,
-    "Default External Handler"
-);
-
-static SYSCALL_HANDLER: StandardTrapHandler = StandardTrapHandler::new(
-    default_syscall_handler,
-    TrapType::SystemCall,
-    100,
-    "Default System Call Handler"
-);
-
-static PAGE_FAULT_INSTRUCTION_HANDLER: StandardTrapHandler = StandardTrapHandler::new(
-    default_page_fault_handler,
-    TrapType::InstructionPageFault,
-    100,
-    "Default Instruction Page Fault Handler"
-);
-
-static PAGE_FAULT_LOAD_HANDLER: StandardTrapHandler = StandardTrapHandler::new(
-    default_page_fault_handler,
-    TrapType::LoadPageFault,
-    100,
-    "Default Load Page Fault Handler"
-);
-
-static PAGE_FAULT_STORE_HANDLER: StandardTrapHandler = StandardTrapHandler::new(
-    default_page_fault_handler,
-    TrapType::StorePageFault,
-    100,
-    "Default Store Page Fault Handler"
-);
-
-static ILLEGAL_INSTRUCTION_HANDLER: StandardTrapHandler = StandardTrapHandler::new(
-    default_illegal_instruction_handler,
-    TrapType::IllegalInstruction,
-    100,
-    "Default Illegal Instruction Handler"
-);
-
-static UNKNOWN_HANDLER: StandardTrapHandler = StandardTrapHandler::new(
-    default_unknown_handler,
-    TrapType::Unknown,
-    100,
-    "Default Unknown Handler"
-);
 
 /// Initialize the trap system with dependency injection
 ///
@@ -165,23 +122,23 @@ pub fn initialize_trap_system(mode: TrapMode) {
         println!("Trap system already initialized");
         return;
     }
-    
+
     // Create static references using raw pointers to static data with lock protection
     let context_manager = {
         let mut cm = CONTEXT_MANAGER.lock();
         container::StaticRef::new(&mut *cm as *mut StandardContextManager)
     };
-    
+
     let hardware_control = {
         let mut hc = HARDWARE_CONTROL.lock();
         container::StaticRef::new(&mut *hc as *mut RiscvHardwareControl)
     };
-    
+
     let error_manager = {
         let mut em = ERROR_MANAGER.lock();
         container::StaticRef::new(&mut *em as *mut StandardErrorManager)
     };
-    
+
     // Create trap system
     let mut trap_system = container::TrapSystem::new(
         context_manager,
@@ -189,32 +146,186 @@ pub fn initialize_trap_system(mode: TrapMode) {
         error_manager,
         &TRAP_SYSTEM_CONFIG,
     );
-    
+
     // Initialize the system
     trap_system.initialize(mode);
-    
-    // Register default handlers
-    trap_system.register_handler(&TIMER_HANDLER);
-    trap_system.register_handler(&SOFTWARE_HANDLER);
-    trap_system.register_handler(&EXTERNAL_HANDLER);
-    trap_system.register_handler(&SYSCALL_HANDLER);
-    trap_system.register_handler(&PAGE_FAULT_INSTRUCTION_HANDLER);
-    trap_system.register_handler(&PAGE_FAULT_LOAD_HANDLER);
-    trap_system.register_handler(&PAGE_FAULT_STORE_HANDLER);
-    trap_system.register_handler(&ILLEGAL_INSTRUCTION_HANDLER);
-    trap_system.register_handler(&UNKNOWN_HANDLER);
-    
+
     // Store the trap system
     {
         let mut ts = TRAP_SYSTEM.lock();
         *ts = Some(trap_system);
     }
-    
+
     println!("Trap system initialized with dependency injection");
+
+    // 注册默认处理器
+    println!("Registering default trap handlers...");
+
+    let default_handlers_registered = register_default_handlers();
+    println!("Registered {} default trap handlers", default_handlers_registered);
+}
+
+/// 内部函数：注册默认处理器
+fn register_default_handler(
+    trap_type: TrapType,
+    handler_fn: fn(&mut TrapContext) -> TrapHandlerResult,
+    priority: u8,
+    description: &'static str
+) -> bool {
+    // 加锁 HANDLER_STORAGE
+    let mut storage = HANDLER_STORAGE.lock();
+
+    // 为默认处理器查找槽位 - 仅在预留范围内
+    let mut idx = DEFAULT_HANDLER_END_IDX;
+    for i in DEFAULT_HANDLER_START_IDX..=DEFAULT_HANDLER_END_IDX {
+        if storage[i].is_none() {
+            idx = i;
+            break;
+        }
+    }
+
+    if idx == DEFAULT_HANDLER_END_IDX && storage[idx].is_some() {
+        println!("Cannot register default handler: no empty slots in reserved range");
+        return false;
+    }
+
+    // 创建并存储处理器实例
+    let handler = StandardTrapHandler::new(
+        handler_fn,
+        trap_type,
+        priority,
+        description
+    );
+
+    storage[idx] = Some(handler);
+
+    // 释放锁，防止死锁
+    drop(storage);
+
+    // 调用 trap_system 注册处理器
+    let result = with_trap_system_mut(|trap_system| {
+        trap_system.register_handler(idx, priority, trap_type, description)
+    });
+
+    // 如果注册失败，回滚
+    if !result {
+        let mut storage = HANDLER_STORAGE.lock();
+        storage[idx] = None;
+        println!("Failed to register default handler in trap system, rolling back storage");
+    }
+
+    result
+}
+
+/// 注册默认处理器的实现
+fn register_default_handlers() -> usize {
+    let mut registered_count = 0;
+
+    // 注册定时器中断默认处理器
+    if register_default_handler(
+        TrapType::TimerInterrupt,
+        default_timer_handler,
+        100,
+        "Default Timer Handler"
+    ) {
+        registered_count += 1;
+    }
+
+    // 注册软件中断默认处理器
+    if register_default_handler(
+        TrapType::SoftwareInterrupt,
+        default_software_handler,
+        100,
+        "Default Software Handler"
+    ) {
+        registered_count += 1;
+    }
+
+    // 注册外部中断默认处理器
+    if register_default_handler(
+        TrapType::ExternalInterrupt,
+        default_external_handler,
+        100,
+        "Default External Handler"
+    ) {
+        registered_count += 1;
+    }
+
+    // 注册系统调用默认处理器
+    if register_default_handler(
+        TrapType::SystemCall,
+        default_syscall_handler,
+        100,
+        "Default System Call Handler"
+    ) {
+        registered_count += 1;
+    }
+
+    // 注册指令页错误默认处理器
+    if register_default_handler(
+        TrapType::InstructionPageFault,
+        default_page_fault_handler,
+        100,
+        "Default Instruction Page Fault Handler"
+    ) {
+        registered_count += 1;
+    }
+
+    // 注册加载页错误默认处理器
+    if register_default_handler(
+        TrapType::LoadPageFault,
+        default_page_fault_handler,
+        100,
+        "Default Load Page Fault Handler"
+    ) {
+        registered_count += 1;
+    }
+
+    // 注册存储页错误默认处理器
+    if register_default_handler(
+        TrapType::StorePageFault,
+        default_page_fault_handler,
+        100,
+        "Default Store Page Fault Handler"
+    ) {
+        registered_count += 1;
+    }
+
+    // 注册非法指令默认处理器
+    if register_default_handler(
+        TrapType::IllegalInstruction,
+        default_illegal_instruction_handler,
+        100,
+        "Default Illegal Instruction Handler"
+    ) {
+        registered_count += 1;
+    }
+
+    // 注册未知中断默认处理器
+    if register_default_handler(
+        TrapType::Unknown,
+        default_unknown_handler,
+        100,
+        "Default Unknown Handler"
+    ) {
+        registered_count += 1;
+    }
+
+    // 注册断点默认处理器
+    if register_default_handler(
+        TrapType::Breakpoint,
+        default_breakpoint_handler,
+        100,
+        "Default Breakpoint Handler"
+    ) {
+        registered_count += 1;
+    }
+
+    registered_count
 }
 
 /// Execute a function with a reference to the trap system
-/// 
+///
 /// # 并发安全性
 ///
 /// 此函数使用Mutex确保在中断上下文和多核环境中的安全访问。
@@ -230,14 +341,14 @@ where
     if !TRAP_SYSTEM_INITIALIZED.load(Ordering::SeqCst) {
         panic!("Trap system not initialized");
     }
-    
+
     let guard = TRAP_SYSTEM.lock();
     let trap_system = guard.as_ref().expect("Trap system is None but initialized flag is true");
     f(trap_system)
 }
 
 /// Execute a function with a mutable reference to the trap system
-/// 
+///
 /// # 并发安全性
 ///
 /// 此函数使用Mutex确保在中断上下文和多核环境中的安全访问。
@@ -253,7 +364,7 @@ where
     if !TRAP_SYSTEM_INITIALIZED.load(Ordering::SeqCst) {
         panic!("Trap system not initialized");
     }
-    
+
     let mut guard = TRAP_SYSTEM.lock();
     let trap_system = guard.as_mut().expect("Trap system is None but initialized flag is true");
     f(trap_system)
@@ -263,43 +374,6 @@ where
 pub fn get_trap_system_initialized() -> bool {
     TRAP_SYSTEM_INITIALIZED.load(Ordering::SeqCst)
 }
-
-// Maximum number of custom handlers we can support
-const MAX_CUSTOM_HANDLERS: usize = 32;
-
-/// 中断处理器注册表状态
-/// 
-/// 封装所有与处理器注册相关的状态，便于通过单一锁保护
-pub struct DiHandlerRegistryState {
-    /// 处理器存储 - 保存所有注册的处理器实例
-    storage: [Option<StandardTrapHandler>; MAX_CUSTOM_HANDLERS],
-    /// 处理器引用 - 指向存储中处理器的静态引用
-    handlers: [Option<&'static StandardTrapHandler>; MAX_CUSTOM_HANDLERS],
-    /// 当前注册的处理器数量
-    count: usize,
-}
-
-impl DiHandlerRegistryState {
-    /// 创建新的处理器注册表状态
-    pub const fn new() -> Self {
-        const NONE_HANDLER: Option<StandardTrapHandler> = None;
-        const NONE_REF: Option<&'static StandardTrapHandler> = None;
-        
-        Self {
-            storage: [NONE_HANDLER; MAX_CUSTOM_HANDLERS],
-            handlers: [NONE_REF; MAX_CUSTOM_HANDLERS],
-            count: 0,
-        }
-    }
-}
-
-// Static storage for custom handlers - thread-safe using Mutex and atomic counter
-//static CUSTOM_HANDLERS: Mutex<[Option<&'static StandardTrapHandler>; MAX_CUSTOM_HANDLERS]> = Mutex::new([None; MAX_CUSTOM_HANDLERS]);
-//static HANDLER_STORAGE: Mutex<[Option<StandardTrapHandler>; MAX_CUSTOM_HANDLERS]> = Mutex::new([None; MAX_CUSTOM_HANDLERS]);
-//static CUSTOM_HANDLER_COUNT: AtomicUsize = AtomicUsize::new(0);
-
-// 替换为单一的受保护状态
-static HANDLER_REGISTRY: Mutex<DiHandlerRegistryState> = Mutex::new(DiHandlerRegistryState::new());
 
 /// Register a custom trap handler
 ///
@@ -312,51 +386,76 @@ pub fn register_handler(
     priority: u8,
     description: &'static str
 ) -> bool {
-    // 获取注册表锁
-    let mut registry = HANDLER_REGISTRY.lock();
-    
-    // 检查是否已达到最大处理器数量
-    if registry.count >= MAX_CUSTOM_HANDLERS {
-        println!("Cannot register handler: maximum number of custom handlers reached");
+    // 加锁 HANDLER_STORAGE
+    let mut storage = HANDLER_STORAGE.lock();
+
+    // 检查传入的 description 在 HANDLER_STORAGE 中是否已存在
+    for i in 0..MAX_CUSTOM_HANDLERS {
+        if let Some(handler) = &storage[i] {
+            if handler.get_description() == description &&
+                handler.get_trap_type() == trap_type {
+                println!("Cannot register handler: description '{}' already exists for trap type {:?}",
+                         description, trap_type);
+                return false;
+            }
+        }
+    }
+
+    // 查找第一个空槽位 - 从默认处理器范围之后开始
+    let mut idx = MAX_CUSTOM_HANDLERS;
+    for i in (DEFAULT_HANDLER_END_IDX + 1)..MAX_CUSTOM_HANDLERS {
+        if storage[i].is_none() {
+            idx = i;
+            break;
+        }
+    }
+
+    // 输出调试信息
+    println!("Handler registration: found slot at index {}, type {:?}, desc '{}'",
+             idx, trap_type, description);
+
+    if idx == MAX_CUSTOM_HANDLERS {
+        println!("Cannot register handler: no empty slots in storage (all {} slots are full)",
+                 MAX_CUSTOM_HANDLERS);
+        // 打印已占用的槽位
+        println!("Occupied slots:");
+        let mut count = 0;
+        for i in 0..MAX_CUSTOM_HANDLERS {
+            if let Some(handler) = &storage[i] {
+                count += 1;
+                println!("  Slot {}: {:?} - '{}'",
+                         i, handler.get_trap_type(), handler.get_description());
+            }
+        }
+        println!("Total occupied: {}/{}", count, MAX_CUSTOM_HANDLERS);
         return false;
     }
-    
-    // 创建处理器
+
+    // 创建并存储处理器实例
     let handler = StandardTrapHandler::new(
         handler_fn,
         trap_type,
         priority,
         description
     );
-    
-    // 获取当前索引并准备存储 - 使用局部变量避免借用冲突
-    let current_idx = registry.count;
-    
-    // 存储在我们的数组中
-    registry.storage[current_idx] = Some(handler);
-    
-    // 创建静态引用并存储 - 这仍需要unsafe，但在锁保护下进行
-    let handler_ref: &'static StandardTrapHandler;
-    unsafe {
-        if let Some(ref h) = registry.storage[current_idx] {
-            // 这是安全的，因为storage数组在整个程序生命周期内存在
-            handler_ref = core::mem::transmute(h);
-            registry.handlers[current_idx] = Some(handler_ref);
-        } else {
-            return false;
-        }
-    }
-    
-    // 通过trap系统注册
+
+    storage[idx] = Some(handler);
+
+    // 释放锁，防止死锁
+    drop(storage);
+
+    // 调用 trap_system 注册处理器
     let result = with_trap_system_mut(|trap_system| {
-        trap_system.register_handler(handler_ref)
+        trap_system.register_handler(idx, priority, trap_type, description)
     });
-    
-    // 如果成功，更新计数
-    if result {
-        registry.count += 1;
+
+    // 如果注册失败，回滚
+    if !result {
+        let mut storage = HANDLER_STORAGE.lock();
+        storage[idx] = None;
+        println!("Failed to register handler in trap system, rolling back storage");
     }
-    
+
     result
 }
 
@@ -367,54 +466,43 @@ pub fn register_handler(
 /// 此函数同时更新trap系统和本地注册表状态，
 /// 确保在多核环境中的一致性
 pub fn unregister_handler(trap_type: TrapType, description: &'static str) -> bool {
-    // 首先通过trap系统注销
-    let result = with_trap_system_mut(|trap_system| {
-        trap_system.unregister_handler(trap_type, description)
-    });
-    
-    // 如果成功，也从我们的注册表中移除
-    if result {
-        let mut registry = HANDLER_REGISTRY.lock();
-        
-        // 查找匹配的处理器
-        let mut found_idx = None;
-        for i in 0..registry.count {
-            if let Some(handler) = registry.handlers[i] {
-                if handler.get_trap_type() == trap_type && 
-                   handler.get_description() == description {
-                    // 找到匹配项
-                    found_idx = Some(i);
-                    break;
-                }
+    // 加锁 HANDLER_STORAGE 用于查找
+    let storage = HANDLER_STORAGE.lock();
+
+    // 根据 trap_type 和 description 查找索引
+    let mut idx = MAX_CUSTOM_HANDLERS;
+    for i in 0..MAX_CUSTOM_HANDLERS {
+        if let Some(handler) = &storage[i] {
+            if handler.get_description() == description &&
+                handler.get_trap_type() == trap_type {
+                idx = i;
+                break;
             }
-        }
-        
-        // 如果找到处理器，移除它
-        if let Some(idx) = found_idx {
-            // 获取当前计数值
-            let current_count = registry.count;
-            
-            // 将所有后续元素前移
-            for j in idx..current_count-1 {
-                // 解决借用问题 - 先取出下一个元素
-                let next_storage = registry.storage[j+1].take();
-                let next_handler = registry.handlers[j+1].take();
-                
-                // 然后赋值给当前元素
-                registry.storage[j] = next_storage;
-                registry.handlers[j] = next_handler;
-            }
-            
-            // 清除最后一个位置 - 使用局部变量避免借用冲突
-            let last_idx = current_count - 1;
-            registry.storage[last_idx] = None;
-            registry.handlers[last_idx] = None;
-            
-            // 减少计数
-            registry.count -= 1;
         }
     }
-    
+
+    if idx == MAX_CUSTOM_HANDLERS {
+        println!("Cannot unregister handler: description '{}' not found for trap type {:?}",
+                 description, trap_type);
+        return false;
+    }
+
+    // 释放查找锁
+    drop(storage);
+
+    // 调用 trap_system 注销处理器
+    let result = with_trap_system_mut(|trap_system| {
+        trap_system.unregister_handler(idx)
+    });
+
+    // 如果注销成功，清除存储
+    if result {
+        let mut storage = HANDLER_STORAGE.lock();
+        storage[idx] = None;
+        println!("Unregistered trap handler: {} for {:?} (index: {})",
+                 description, trap_type, idx);
+    }
+
     result
 }
 
@@ -427,9 +515,26 @@ pub fn handler_count(trap_type: TrapType) -> usize {
 
 /// Print all registered handlers
 pub fn print_handlers() {
+    // 锁定 HANDLER_STORAGE
+    let storage = HANDLER_STORAGE.lock();
+
+    // 调用 trap_system 打印处理器 - 需要转换为切片
     with_trap_system(|trap_system| {
-        trap_system.print_handlers()
-    })
+        trap_system.print_handlers(&storage[..]);
+    });
+}
+
+/// Internal function to handle trap events without conflicting with the main handler
+pub fn internal_handle_trap(context: *mut TrapContext) {
+    // 锁定 HANDLER_STORAGE
+    let storage = HANDLER_STORAGE.lock();
+
+    // 调用 trap_system 处理中断 - 需要转换为切片
+    with_trap_system(|trap_system| {
+        trap_system.handle_trap(context, &storage[..]);
+    });
+
+    // 锁会在函数返回时自动释放
 }
 
 /// Enable interrupts
@@ -527,39 +632,18 @@ pub fn get_interrupt_nest_level() -> usize {
     })
 }
 
-/// Internal function to handle trap events without conflicting with the main handler
-pub fn internal_handle_trap(context: *mut TrapContext) {
-    with_trap_system(|trap_system| {
-        trap_system.handle_trap(context);
-    })
-}
-
 /// 获取自定义处理器数量
 ///
 /// 返回通过DI系统注册的自定义处理器总数
 pub fn custom_handler_count() -> usize {
-    let registry = HANDLER_REGISTRY.lock();
-    registry.count
-}
-
-/// 打印所有注册的自定义处理器
-///
-/// 显示通过DI系统注册的所有处理器信息
-pub fn print_custom_handlers() {
-    let registry = HANDLER_REGISTRY.lock();
-    println!("=== Registered Custom Handlers ({}) ===", registry.count);
-    
-    for i in 0..registry.count {
-        if let Some(handler) = registry.handlers[i] {
-            println!("{}. {} (Type: {:?}, Priority: {})",
-                    i + 1,
-                    handler.get_description(),
-                    handler.get_trap_type(),
-                    handler.get_priority());
+    let storage = HANDLER_STORAGE.lock();
+    let mut count = 0;
+    for i in 0..MAX_CUSTOM_HANDLERS {
+        if storage[i].is_some() {
+            count += 1;
         }
     }
-    
-    println!("=======================================");
+    count
 }
 
 /// Register an error handler
@@ -644,6 +728,6 @@ pub fn reset_panic_mode() {
 // 导出公共函数和接口
 pub use self::container::{TrapSystem, StaticRef};
 pub use self::traits::{
-    TrapHandlerInterface, ContextManagerInterface, 
+    TrapHandlerInterface, ContextManagerInterface,
     HardwareControlInterface, TrapSystemConfig, ErrorManagerInterface
 };

@@ -27,29 +27,29 @@ fn test_concurrent_handler(ctx: &mut TrapContext) -> TrapHandlerResult {
 /// 测试并发初始化安全性
 pub fn test_concurrent_initialization() {
     println!("Testing concurrent initialization safety...");
-    
+
     // 重置状态标志（仅用于测试）
     unsafe {
         // 此处需要访问私有字段，仅用于测试
         super::TRAP_SYSTEM_INITIALIZED.store(false, Ordering::SeqCst);
     }
-    
+
     // 模拟多次并发初始化调用
     for i in 0..5 {
         println!("Initialization attempt {}", i);
         initialize_trap_system(crate::trap::ds::TrapMode::Direct);
     }
-    
+
     println!("Concurrent initialization test passed");
 }
 
 /// 测试并发处理器注册
 pub fn test_concurrent_handler_registration() {
     println!("Testing concurrent handler registration...");
-    
+
     // 重置计数器
     TEST_HANDLERS_REGISTERED.store(0, Ordering::SeqCst);
-    
+
     // 模拟多个上下文注册处理器
     for i in 0..10 {
         let priority = 50 + i as u8;
@@ -65,101 +65,118 @@ pub fn test_concurrent_handler_registration() {
             8 => "Test Handler 9",
             _ => "Test Handler 10",
         };
-        
+
         let result = register_handler(
             TrapType::TimerInterrupt,
             test_concurrent_handler,
             priority,
             desc
         );
-        
+
         if result {
             TEST_HANDLERS_REGISTERED.fetch_add(1, Ordering::SeqCst);
         }
     }
-    
+
     // 验证注册结果
     let registered = TEST_HANDLERS_REGISTERED.load(Ordering::SeqCst);
     println!("Successfully registered {} handlers", registered);
-    
+
     // 打印所有处理器
     print_handlers();
-    
+
     // 尝试注销一个处理器
     let unregister_result = unregister_handler(
         TrapType::TimerInterrupt,
         "Test Handler 1"
     );
-    
+
     println!("Unregistration result: {}", unregister_result);
-    
+
     println!("Concurrent handler registration test passed");
 }
 
 /// 测试中断上下文并发安全性
 pub fn test_interrupt_concurrency() {
     println!("Testing interrupt concurrency safety...");
-    
+
+    const TEST_HANDLER_NAME: &'static str = "Interrupt Concurrency Test Handler";
+
+    // 先尝试清理可能的残留处理器
+    println!("Cleaning up any residual test handlers...");
+    unregister_handler(TrapType::TimerInterrupt, TEST_HANDLER_NAME);
+
     // 保存当前中断状态
     let was_enabled = disable_interrupts();
     println!("Interrupts disabled, previous state: {}", was_enabled);
-    
+
     // 注册一个测试处理器
-    register_handler(
+    let register_result = register_handler(
         TrapType::TimerInterrupt,
         test_concurrent_handler,
         30,
-        "Interrupt Concurrency Test Handler"
+        TEST_HANDLER_NAME
     );
-    
+    assert!(register_result, "Failed to register test handler");
+    println!("Test handler registered successfully");
+
     // 重置调用计数
     TEST_HANDLER_CALL_COUNT.store(0, Ordering::SeqCst);
-    
+
     // 启用中断并等待一段时间
     enable_interrupts();
     println!("Interrupts enabled, waiting for timer interrupt...");
-    
+
     // 等待一段时间，让中断发生
     for _ in 0..1000000 {
         core::hint::spin_loop();
     }
-    
+
     // 禁用中断并检查结果
     disable_interrupts();
     let call_count = TEST_HANDLER_CALL_COUNT.load(Ordering::SeqCst);
     println!("Handler was called {} times", call_count);
-    
+
+    // 清理：注销测试处理器
+    println!("Cleaning up test handler...");
+    let unregister_result = unregister_handler(
+        TrapType::TimerInterrupt,
+        TEST_HANDLER_NAME
+    );
+    assert!(unregister_result, "Failed to unregister test handler");
+    println!("Test handler unregistered successfully");
+
     // 恢复原始状态
     if was_enabled {
         enable_interrupts();
     }
-    
+
     println!("Interrupt concurrency test completed");
 }
 
 /// 测试锁性能
 pub fn test_lock_performance() {
     println!("Testing lock performance...");
-    
+
     // 测量获取锁的时间
     let iterations = 1000;
     let mut total_cycles = 0;
-    
+
     for _ in 0..iterations {
         let start = crate::util::sbi::timer::get_time();
-        
+
         // 执行带锁的操作
         let result = super::with_trap_system(|trap_system| {
             trap_system.handler_count_for_type(TrapType::TimerInterrupt)
         });
-        
+
         let end = crate::util::sbi::timer::get_time();
         total_cycles += end - start;
     }
-    
+
     let avg_cycles = total_cycles / iterations as u64;
     println!("Average lock acquisition time: {} cycles", avg_cycles);
-    
+
     println!("Lock performance test completed");
 }
 
@@ -189,7 +206,6 @@ pub fn test_handler_registry_safety() {
     const HANDLER3_DESC: &'static str = "Registry Test Handler 3";
 
     // 先尝试清除可能残留的测试处理器，确保测试环境干净
-    // 注意：即使这些调用返回 false 也继续执行，因为它们可能不存在
     unregister_handler(TrapType::TimerInterrupt, HANDLER1_DESC);
     unregister_handler(TrapType::TimerInterrupt, HANDLER2_DESC);
     unregister_handler(TrapType::TimerInterrupt, HANDLER3_DESC);
@@ -256,20 +272,15 @@ pub fn test_handler_registry_safety() {
                expected_final_count, final_count);
 
     // 4. 清理 - 注销所有我们添加的测试处理器
-    //    我们尝试移除 Handler 1, Handler 2, Handler 3 各一次。
-    //    由于 Handler 2 被重新注册了（可能存在副本或被替换），
-    //    我们期望总共移除 3 个处理器。
     println!("Attempting cleanup of test handlers...");
     let _cleanup1 = unregister_handler(TrapType::TimerInterrupt, HANDLER1_DESC);
     let _cleanup2 = unregister_handler(TrapType::TimerInterrupt, HANDLER2_DESC);
     let _cleanup3 = unregister_handler(TrapType::TimerInterrupt, HANDLER3_DESC);
-    // 不再关心 cleanupX 的布尔返回值，因为它们在处理重复时不可靠
 
     // 获取清理后的处理器数量
     let cleanup_count = handler_count(TrapType::TimerInterrupt);
     println!("After cleanup handler count: {}", cleanup_count);
 
-    // **修正后的检查逻辑：**
     // 检查实际移除的数量是否等于我们尝试移除的数量 (3)
     let actual_removed_count = final_count.saturating_sub(cleanup_count); // 使用 saturating_sub 防止下溢
     let expected_removed_count = 3; // 我们尝试移除 H1, H2, H3 这三个
@@ -277,7 +288,6 @@ pub fn test_handler_registry_safety() {
     println!("Checking cleanup: actual removed count {} vs expected removed count {}",
              actual_removed_count, expected_removed_count);
 
-    // **修正后的断言：**
     // 断言实际移除的数量是否等于预期移除的数量
     assert_eq!(actual_removed_count, expected_removed_count,
                "Cleanup removed an unexpected number of handlers: expected to remove {}, actually removed {}",
@@ -285,9 +295,8 @@ pub fn test_handler_registry_safety() {
 
     // 最终检查：清理后的数量应该等于测试开始前的初始数量
     assert_eq!(cleanup_count, initial_count,
-                "Handler count after cleanup ({}) does not match initial count before test registration ({})",
-                cleanup_count, initial_count);
-
+               "Handler count after cleanup ({}) does not match initial count before test registration ({})",
+               cleanup_count, initial_count);
 
     println!("Handler registry thread safety test passed");
 }
@@ -295,12 +304,12 @@ pub fn test_handler_registry_safety() {
 /// 运行所有并发安全测试
 pub fn run_all_concurrency_tests() {
     println!("=== Running DI System Concurrency Tests ===");
-    
+
     test_concurrent_initialization();
     test_concurrent_handler_registration();
     test_interrupt_concurrency();
     test_lock_performance();
-    test_handler_registry_safety(); // 添加这一行，调用新的测试函数
-    
+    test_handler_registry_safety();
+
     println!("=== All DI System Concurrency Tests Passed ===");
 }
