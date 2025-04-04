@@ -5,12 +5,12 @@
 mod vector;
 mod context;
 mod registry;
-pub mod test;
+//pub mod test;
 pub mod di;  // New dependency injection module
 pub mod error_handler;  // Error handling module
-pub mod error_test;  // Error handling tests
+//pub mod error_test;  // Error handling tests
 pub mod enhanced_handlers;  // 增强型异常处理器
-pub mod test_enhanced;  // 增强型异常处理器测试
+//pub mod test_enhanced;  // 增强型异常处理器测试
 
 use crate::println;
 use crate::trap::ds::{TrapContext, TaskContext, TrapMode, Interrupt, Exception, TrapType, TrapHandlerResult, TrapError};

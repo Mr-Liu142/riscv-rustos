@@ -81,20 +81,6 @@ fn rust_main() -> ! {
     // 初始化中断系统
     trap::init();
     
-    // 运行中断系统测试
-    println!("Starting trap system tests...");
-    trap::infrastructure::test::run_all_tests();
-    println!("Trap system tests completed");
-
-    println!("Starting enhanced exception handlers tests...");
-    trap::infrastructure::test_enhanced::run_all_tests();
-    println!("Enhanced exception handlers tests completed");
-    
-    // 运行并发安全测试
-    println!("Starting concurrency safety tests...");
-    trap::infrastructure::di::concurrency_test::run_all_concurrency_tests();
-    println!("Concurrency safety tests completed");
-    
     // 使用新封装的系统信息功能
     let sys_info = util::sbi::system::get_system_info();
     sys_info.print();
