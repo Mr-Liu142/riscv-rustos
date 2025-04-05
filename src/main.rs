@@ -95,7 +95,7 @@ fn rust_main() -> ! {
     trap::init();  // 这应该内部调用DI系统的初始化
 
     // 直接运行测试（不使用条件编译）
-    //run_kernel_tests();
+    run_kernel_tests();
     
     // 使用新封装的系统信息功能
     let sys_info = util::sbi::system::get_system_info();

@@ -1,19 +1,21 @@
 //! Trap System Public API
 //!
 //! This module provides a stable, clear, and unified public interface for
-//! interacting with the trap system. It serves as the only entry point for other
-//! kernel modules (such as Memory Management, Scheduler, etc.) to interact with
-//! the trap system.
-//!
-//! The API hides the internal complexity of the trap system, particularly the
-//! infrastructure and dependency injection components, providing a simplified
-//! interface that reduces coupling and enhances maintainability.
+//! interacting with the trap system.
 
 use crate::trap::ds::{
     TrapType, TrapContext, TrapHandler, TrapHandlerResult, Interrupt, 
     SystemError, ErrorResult, ErrorSource, ErrorLevel, ErrorCode,
 };
+use crate::trap::ds::handler::{ProtectionLevel, RegistrarId, SYSTEM_REGISTRAR_ID, generate_registrar_id};
 use crate::trap::infrastructure::di::context::ContextId;
+use crate::trap::infrastructure::{
+    SecurityError,             // 直接引用re-export的SecurityError
+    register_handler_with_owner,  // 直接引用re-export的函数
+    unregister_handler,           // 直接引用re-export的函数
+    unregister_handler_secure,    // 直接引用re-export的函数  
+    unregister_handlers_for_context_secure  // 直接引用re-export的函数
+};
 use crate::println;
 
 /// Errors that can occur when interacting with the trap API
@@ -35,6 +37,12 @@ pub enum TrapApiError {
     OperationNotAllowed,
     /// The underlying trap system encountered an error
     InternalError,
+    /// Operation not permitted - trying to modify a protected handler
+    ProtectedHandler,
+    /// Invalid registrar ID - not the original registrar
+    InvalidRegistrarId,
+    /// System level operation not permitted
+    SystemLevelRequired,
 }
 
 impl core::fmt::Display for TrapApiError {
@@ -48,15 +56,26 @@ impl core::fmt::Display for TrapApiError {
             Self::InvalidContextId => write!(f, "Invalid context ID"),
             Self::OperationNotAllowed => write!(f, "Operation not allowed in current state"),
             Self::InternalError => write!(f, "Internal trap system error"),
+            Self::ProtectedHandler => write!(f, "Cannot modify protected handler"),
+            Self::InvalidRegistrarId => write!(f, "Invalid registrar ID, not original owner"),
+            Self::SystemLevelRequired => write!(f, "System level permission required"),
         }
     }
 }
 
-//
-// Trap Handler Management Functions
-//
+/// 获取当前模块的注册者ID
+/// 
+/// 每个模块在使用Trap API前应该获取一个唯一的注册者ID
+/// 用于标识自己注册的处理器
+///
+/// # Returns
+///
+/// 新的注册者ID
+pub fn get_registrar_id() -> RegistrarId {
+    generate_registrar_id()
+}
 
-/// Register a trap handler for a specific trap type
+/// Register a trap handler for a specific trap type with ownership tracking
 ///
 /// # Parameters
 ///
@@ -65,15 +84,42 @@ impl core::fmt::Display for TrapApiError {
 /// * `priority` - Priority level (lower values mean higher priority)
 /// * `description` - A static description of the handler (for debugging)
 /// * `context_id` - Optional context ID to associate the handler with
+/// * `registrar_id` - ID of the registering module (obtained via get_registrar_id())
 ///
 /// # Returns
 ///
 /// * `Ok(())` if registration was successful
 /// * `Err(TrapApiError)` if registration failed
-///
-/// # Thread Safety
-///
-/// This function is safe to call from multiple threads or in interrupt context.
+pub fn register_trap_handler_secure(
+    trap_type: TrapType,
+    handler: TrapHandler,
+    priority: u8,
+    description: &'static str,
+    context_id: Option<ContextId>,
+    registrar_id: RegistrarId
+) -> Result<(), TrapApiError> {
+    // 检查系统是否初始化
+    if !crate::trap::infrastructure::di::get_trap_system_initialized() {
+        return Err(TrapApiError::SystemNotInitialized);
+    }
+
+    // 使用正确导入的函数
+    if register_handler_with_owner(
+        trap_type,
+        handler,
+        priority,
+        description,
+        ProtectionLevel::User, // 用户级
+        registrar_id,          // 记录注册者
+        context_id
+    ) {
+        Ok(())
+    } else {
+        Err(TrapApiError::RegistrationFailed)
+    }
+}
+
+/// 保持原有的注册函数，但在内部设为系统级
 pub fn register_trap_handler(
     trap_type: TrapType,
     handler: TrapHandler,
@@ -81,55 +127,77 @@ pub fn register_trap_handler(
     description: &'static str,
     context_id: Option<ContextId>
 ) -> Result<(), TrapApiError> {
-    // Check if trap system is initialized
+    // 检查系统是否初始化
     if !crate::trap::infrastructure::di::get_trap_system_initialized() {
         return Err(TrapApiError::SystemNotInitialized);
     }
 
-    // Call the internal function to register the handler
-    let result = crate::trap::infrastructure::di::register_handler(
+    // 使用正确导入的函数
+    if register_handler_with_owner(
         trap_type,
         handler,
         priority,
         description,
+        ProtectionLevel::System, // 系统级
+        SYSTEM_REGISTRAR_ID,     // 系统注册者
         context_id
-    );
-
-    if result {
+    ) {
         Ok(())
     } else {
         Err(TrapApiError::RegistrationFailed)
     }
 }
 
-/// Unregister a trap handler
+/// Unregister a trap handler with ownership verification
 ///
 /// # Parameters
 ///
 /// * `trap_type` - The type of trap the handler was registered for
 /// * `description` - The description used when registering the handler
+/// * `registrar_id` - ID of the module attempting to unregister
 ///
 /// # Returns
 ///
 /// * `Ok(())` if unregistration was successful
 /// * `Err(TrapApiError)` if the handler was not found or could not be unregistered
-///
-/// # Thread Safety
-///
-/// This function is safe to call from multiple threads or in interrupt context.
-pub fn unregister_trap_handler(
+pub fn unregister_trap_handler_secure(
     trap_type: TrapType,
-    description: &'static str
+    description: &'static str,
+    registrar_id: RegistrarId
 ) -> Result<(), TrapApiError> {
-    // Check if trap system is initialized
+    // 检查系统是否初始化
     if !crate::trap::infrastructure::di::get_trap_system_initialized() {
         return Err(TrapApiError::SystemNotInitialized);
     }
 
-    // Call the internal function to unregister the handler
-    let result = crate::trap::infrastructure::di::unregister_handler(trap_type, description);
+    // 调用安全版解注册函数，使用正确的路径
+    match unregister_handler_secure(
+        trap_type,
+        description,
+        registrar_id
+    ) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(TrapApiError::HandlerNotFound),
+        Err(SecurityError::ProtectedHandler) =>
+            Err(TrapApiError::ProtectedHandler),
+        Err(SecurityError::InvalidRegistrar) =>
+            Err(TrapApiError::InvalidRegistrarId),
+        Err(_) => Err(TrapApiError::InternalError),
+    }
+}
 
-    if result {
+/// 保持原有的注销函数，但内部使用系统权限
+pub fn unregister_trap_handler(
+    trap_type: TrapType,
+    description: &'static str
+) -> Result<(), TrapApiError> {
+    // 检查系统是否初始化
+    if !crate::trap::infrastructure::di::get_trap_system_initialized() {
+        return Err(TrapApiError::SystemNotInitialized);
+    }
+
+    // 调用原有函数，使用正确的导入路径
+    if unregister_handler(trap_type, description) {
         Ok(())
     } else {
         Err(TrapApiError::HandlerNotFound)
@@ -149,15 +217,33 @@ pub fn unregister_trap_handler(
 /// # Thread Safety
 ///
 /// This function is safe to call from multiple threads or in interrupt context.
-pub fn unregister_trap_handlers_for_context(context_id: ContextId) -> usize {
-    // Check if trap system is initialized
+pub fn unregister_trap_handlers_for_context_secure(
+    context_id: ContextId,
+    registrar_id: RegistrarId
+) -> usize {
+    // 检查系统是否初始化
     if !crate::trap::infrastructure::di::get_trap_system_initialized() {
         return 0;
     }
 
-    // Call the internal function to unregister handlers
+    // 调用安全版函数，使用正确的导入路径
+    unregister_handlers_for_context_secure(
+        context_id,
+        registrar_id
+    )
+}
+
+/// 保持原有接口，但内部使用系统权限
+pub fn unregister_trap_handlers_for_context(context_id: ContextId) -> usize {
+    // 检查系统是否初始化
+    if !crate::trap::infrastructure::di::get_trap_system_initialized() {
+        return 0;
+    }
+
+    // 调用原有接口
     crate::trap::infrastructure::di::unregister_handlers_for_context(context_id)
 }
+
 
 //
 // Interrupt Control Functions

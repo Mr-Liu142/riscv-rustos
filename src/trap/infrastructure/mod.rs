@@ -43,10 +43,14 @@ pub use context::{
 // Export handler registry API
 pub use registry::{
     register_handler,
+    register_handler_with_owner,
     unregister_handler,
+    unregister_handler_secure,
     dispatch_trap,
     handler_count,
     print_handlers,
+    unregister_handlers_for_context_secure,
+    SecurityError,
 };
 
 // Export error handling API with renamed functions

@@ -5,9 +5,23 @@
 use crate::trap::api;
 use crate::trap::ds::{
     TrapType, TrapContext, TrapHandlerResult, Interrupt, 
-    SystemError, ErrorResult, ErrorSource, ErrorLevel
+    SystemError, ErrorResult, ErrorSource, ErrorLevel, TrapError
 };
+use crate::trap::ds::handler::RegistrarId;
 use crate::println;
+
+// 全局测试模块注册者ID
+static mut TEST_REGISTRAR_ID: Option<RegistrarId> = None;
+
+// 获取测试模块的注册者ID
+fn get_test_registrar_id() -> RegistrarId {
+    unsafe {
+        if TEST_REGISTRAR_ID.is_none() {
+            TEST_REGISTRAR_ID = Some(api::get_registrar_id());
+        }
+        TEST_REGISTRAR_ID.unwrap()
+    }
+}
 
 // 测试用的中断处理函数
 fn test_trap_handler(ctx: &mut TrapContext) -> TrapHandlerResult {
@@ -25,17 +39,22 @@ fn test_error_handler(error: &SystemError) -> ErrorResult {
 fn test_handler_management() -> bool {
     println!("Testing trap handler management...");
     
+    // 获取测试模块的注册者ID
+    let registrar_id = get_test_registrar_id();
+    println!("Test module registrar ID: {}", registrar_id);
+    
     // 生成唯一上下文ID用于测试
     let context_id = api::generate_context_id();
     println!("Generated context ID: {}", context_id);
     
     // 测试注册处理器
-    let register_result = api::register_trap_handler(
-        TrapType::SoftwareInterrupt, // 改用不同的中断类型，避免与现有处理器冲突
+    let register_result = api::register_trap_handler_secure(
+        TrapType::SoftwareInterrupt,
         test_trap_handler,
         50,
         "Test Software Interrupt Handler",
-        Some(context_id)
+        Some(context_id),
+        registrar_id // 使用正确的注册者ID
     );
     
     if register_result.is_err() {
@@ -46,12 +65,13 @@ fn test_handler_management() -> bool {
     println!("Successfully registered first test handler");
     
     // 尝试注册第二个处理器
-    let register_result2 = api::register_trap_handler(
+    let register_result2 = api::register_trap_handler_secure(
         TrapType::SystemCall,
         test_trap_handler,
         50,
         "Test System Call Handler",
-        Some(context_id)
+        Some(context_id),
+        registrar_id // 使用正确的注册者ID
     );
     
     if register_result2.is_err() {
@@ -61,64 +81,65 @@ fn test_handler_management() -> bool {
     
     println!("Successfully registered second test handler");
     
+    // 测试使用错误的注册者ID注销处理器
+    let invalid_registrar_id = registrar_id + 1;
+    let unregister_result = api::unregister_trap_handler_secure(
+        TrapType::SoftwareInterrupt,
+        "Test Software Interrupt Handler",
+        invalid_registrar_id // 使用错误的注册者ID
+    );
+    
+    if unregister_result.is_ok() {
+        println!("Unexpectedly succeeded in unregistering with wrong registrar ID");
+        return false;
+    } else {
+        println!("As expected, failed to unregister with wrong registrar ID: {:?}", 
+                 unregister_result.err().unwrap());
+    }
+    
+    // 测试注销单个处理器
+    let unregister_result2 = api::unregister_trap_handler_secure(
+        TrapType::SoftwareInterrupt,
+        "Test Software Interrupt Handler",
+        registrar_id // 使用正确的注册者ID
+    );
+    
+    if unregister_result2.is_err() {
+        println!("Failed to unregister handler: {:?}", unregister_result2.err().unwrap());
+        return false;
+    }
+    
+    println!("Successfully unregistered first test handler");
+    
     // 测试注销指定上下文的所有处理器
-    let unregister_count = api::unregister_trap_handlers_for_context(context_id);
+    let unregister_count = api::unregister_trap_handlers_for_context_secure(
+        context_id,
+        registrar_id // 使用正确的注册者ID
+    );
     
     println!("Unregistered {} handlers for context ID: {}", unregister_count, context_id);
     
-    if unregister_count != 2 { // 我们注册了两个处理器
-        println!("Expected to unregister 2 handlers, but got {}", unregister_count);
+    if unregister_count != 1 { // 应该注销1个处理器，因为之前已经手动注销了一个
+        println!("Expected to unregister 1 handler, but got {}", unregister_count);
         return false;
     }
     
-    // 测试注册和注销单个处理器
-    // 使用与默认处理器和增强处理器不同的类型
-    // 由于从日志看到TimerInterrupt、ExternalInterrupt等已经被占用
-    // 我们使用一个不太常用的中断类型
-    let unique_description = "Unique Test Breakpoint Handler";
-    
-    let register_result3 = api::register_trap_handler(
-        TrapType::Breakpoint,
-        test_trap_handler,
-        25, // 注意优先级设为25，应该比已有的处理器优先级高
-        unique_description,
-        None
+    // 测试尝试注销系统级处理器
+    let system_handler_unregister = api::unregister_trap_handler_secure(
+        TrapType::TimerInterrupt, // 系统默认处理器
+        "Default Timer Handler", 
+        registrar_id // 非系统注册者ID
     );
     
-    if register_result3.is_err() {
-        println!("Failed to register unique handler: {:?}", register_result3.err().unwrap());
-        // 不要失败，继续测试
-        println!("Continuing test despite registration failure");
+    if system_handler_unregister.is_ok() {
+        println!("Unexpectedly succeeded in unregistering system handler");
+        return false;
     } else {
-        println!("Successfully registered unique test handler");
-        
-        // 测试直接注销处理器
-        let unregister_result = api::unregister_trap_handler(
-            TrapType::Breakpoint,
-            unique_description
-        );
-        
-        if unregister_result.is_err() {
-            println!("Failed to unregister handler: {:?}", unregister_result.err().unwrap());
-            return false;
-        }
-        
-        println!("Successfully unregistered unique test handler");
+        println!("As expected, failed to unregister system handler: {:?}", 
+                 system_handler_unregister.err().unwrap());
     }
     
-    // 测试注销不存在的处理器
-    let unregister_result2 = api::unregister_trap_handler(
-        TrapType::ExternalInterrupt,
-        "Non-existent Handler"
-    );
-    
-    if unregister_result2.is_ok() {
-        println!("Unexpectedly succeeded in unregistering non-existent handler");
-        return false;
-    }
-    
-    println!("As expected, could not unregister non-existent handler");
-    println!("Trap handler management tests passed");
+    println!("Trap handler security tests passed");
     true
 }
 
