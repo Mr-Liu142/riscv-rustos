@@ -2,6 +2,7 @@
 //!
 //! 测试 trap::api 模块的功能
 
+use riscv::register::sstatus; // 需要引入 sstatus
 use crate::trap::api;
 use crate::trap::ds::{
     TrapType, TrapContext, TrapHandlerResult, Interrupt, 
@@ -146,39 +147,94 @@ fn test_handler_management() -> bool {
 // 测试中断控制函数
 fn test_interrupt_control() -> bool {
     println!("Testing interrupt control...");
-    
+
+    // --- 保存初始状态 ---
+    // 读取测试前的全局中断使能状态 (SIE bit in sstatus)
+    let initial_global_enabled = sstatus::read().sie();
+    // 读取测试前的定时器中断使能状态 (STIE bit in sie)
+    let initial_timer_enabled = api::is_interrupt_enabled(Interrupt::SupervisorTimer);
+    println!("Interrupt control test: Initial state - global_enabled={}, timer_enabled={}", initial_global_enabled, initial_timer_enabled);
+    // --- 结束保存初始状态 ---
+
+    let mut test_passed = true;
+
     // 测试全局中断控制
-    let was_enabled = api::disable_interrupts();
-    
-    // 检查是否成功禁用
-    if api::enable_interrupts() {
-        println!("Interrupts were still enabled after disable_interrupts()");
-        return false;
+    let was_enabled_api = api::disable_interrupts(); // API 返回的是禁用前的状态
+
+    // 直接检查硬件状态确认是否禁用
+    if sstatus::read().sie() {
+        println!("FAIL: Interrupts were still enabled (sstatus.SIE=1) after api::disable_interrupts()");
+        test_passed = false;
+    } else {
+        println!("OK: Global interrupts disabled.");
     }
-    
-    // 恢复中断状态
-    api::restore_interrupts(was_enabled);
-    
-    // 测试特定中断类型控制
+
+    // 恢复中断状态 (使用 API 返回的状态，或选择恢复 initial_global_enabled)
+    // 这里我们选择恢复到测试函数开始时的状态，更健壮
+    api::restore_interrupts(initial_global_enabled);
+    if sstatus::read().sie() != initial_global_enabled {
+         println!("WARN: Failed to restore initial global interrupt state correctly.");
+         // 根据需要决定是否算失败
+    } else {
+        println!("OK: Restored initial global interrupt enable state: {}", initial_global_enabled);
+    }
+
+
+    // 测试特定中断类型控制 (假设全局中断现在是 initial_global_enabled)
     api::disable_specific_interrupt(Interrupt::SupervisorTimer);
-    
+
     // 验证中断被禁用
     if api::is_interrupt_enabled(Interrupt::SupervisorTimer) {
-        println!("Timer interrupt still enabled after disabling");
-        return false;
+        println!("FAIL: Timer interrupt still enabled after disabling");
+        test_passed = false;
+    } else {
+        println!("OK: Supervisor Timer interrupt disabled.");
     }
-    
+
     // 重新启用
     api::enable_specific_interrupt(Interrupt::SupervisorTimer);
-    
+
     // 验证中断被启用
     if !api::is_interrupt_enabled(Interrupt::SupervisorTimer) {
-        println!("Timer interrupt not enabled after enabling");
-        return false;
+        println!("FAIL: Timer interrupt not enabled after enabling");
+        test_passed = false;
+    } else {
+        println!("OK: Supervisor Timer interrupt enabled.");
     }
-    
-    println!("Interrupt control tests passed");
-    true
+
+
+    // --- 恢复初始状态 ---
+    // 确保无论测试内部逻辑如何，最终都恢复到测试前的状态
+    println!("Interrupt control test: Restoring initial state - global_enabled={}, timer_enabled={}", initial_global_enabled, initial_timer_enabled);
+
+    // 恢复定时器中断状态
+    if initial_timer_enabled {
+        api::enable_specific_interrupt(Interrupt::SupervisorTimer);
+    } else {
+        api::disable_specific_interrupt(Interrupt::SupervisorTimer);
+    }
+    // 验证恢复
+    if api::is_interrupt_enabled(Interrupt::SupervisorTimer) != initial_timer_enabled {
+         println!("WARN: Failed to restore initial timer interrupt state correctly.");
+         // 根据需要决定是否算失败
+    }
+
+    // 恢复全局中断状态
+    api::restore_interrupts(initial_global_enabled);
+    // 验证恢复
+    if sstatus::read().sie() != initial_global_enabled {
+        println!("WARN: Failed to restore initial global interrupt state correctly (final check).");
+        // 根据需要决定是否算失败
+    }
+    println!("Interrupt control test: Initial state restored.");
+    // --- 结束恢复初始状态 ---
+
+    if test_passed {
+        println!("Interrupt control tests passed");
+    } else {
+         println!("Interrupt control tests FAILED");
+    }
+    test_passed // 返回最终测试结果
 }
 
 // 测试状态查询函数
