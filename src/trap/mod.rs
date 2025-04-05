@@ -3,9 +3,14 @@
 use crate::println;
 
 // Import submodules
-pub mod infrastructure;
+pub(crate) mod infrastructure;
 pub mod ds;  // Data structures module
+pub mod api; // Public API module
 
+// Export only the API module's public interface
+pub use api::*;
+
+/* 
 // Export DI system from infrastructure module
 pub use infrastructure::di::{
     initialize_trap_system,
@@ -53,11 +58,12 @@ pub use infrastructure::{
     reset_panic_mode,
 };
 
+*/
 
 /// Initialize the trap system
 pub fn init() {
     // Initialize the trap system using the DI system
-    infrastructure::di::initialize_trap_system(TrapMode::Direct);
+    infrastructure::di::initialize_trap_system(ds::TrapMode::Direct);
     
     // Initialize global context manager (for backward compatibility)
     ds::init_global_context_manager();
@@ -71,9 +77,19 @@ pub fn init() {
     println!("Trap system fully initialized");
 }
 
+/*
 /// Convert RISC-V trap cause to TrapType
 pub fn decode_trap_cause(cause: riscv::register::scause::Scause) -> TrapType {
     // Use the TrapCause wrapper to convert scause
     let trap_cause = TrapCause::from_bits(cause.bits());
+    trap_cause.to_trap_type()
+}
+    */
+/// Convert RISC-V trap cause to TrapType
+///
+/// This is a utility function primarily for internal use.
+pub(crate) fn decode_trap_cause(cause: riscv::register::scause::Scause) -> ds::TrapType {
+    // Use the TrapCause wrapper to convert scause
+    let trap_cause = ds::TrapCause::from_bits(cause.bits());
     trap_cause.to_trap_type()
 }

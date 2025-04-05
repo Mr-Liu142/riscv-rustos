@@ -10,6 +10,7 @@ use core::arch::asm;
 mod console;
 mod util;
 mod trap;
+mod test;
 
 // 启动栈大小
 const STACK_SIZE: usize = 4096 * 4;
@@ -70,6 +71,22 @@ fn _start() -> ! {
     loop {}
 }
 
+fn run_kernel_tests() {
+    println!("Starting kernel tests...");
+    
+    // 初始化测试环境
+    crate::test::init_test_system();
+    
+    // 运行测试
+    let test_success = crate::test::run_all_tests();
+    
+    if !test_success {
+        println!("WARNING: Kernel tests failed!");
+    } else {
+        println!("All kernel tests passed successfully!");
+    }
+}
+
 #[no_mangle]
 fn rust_main() -> ! {
     println!("Hello, RISC-V RustOS!");
@@ -77,9 +94,8 @@ fn rust_main() -> ! {
     // 初始化中断系统
     trap::init();  // 这应该内部调用DI系统的初始化
 
-
-    // 初始化中断系统
-    trap::init();
+    // 直接运行测试（不使用条件编译）
+    //run_kernel_tests();
     
     // 使用新封装的系统信息功能
     let sys_info = util::sbi::system::get_system_info();
